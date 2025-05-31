@@ -44,6 +44,28 @@ Community::Community(GraphBinary gb, int st, double thr) {
     threshold = thr;
 }
 
+Community::Community(GraphExtended ge, int st, double thr) {
+    gE = ge;
+    size = ge.nNodes;
+
+    neighbourWeights.resize(size, -1);
+    neighbourPositions.resize(size);
+    neighbourLast = 0;
+
+    n2c.resize(size);
+    in.resize(size);
+    tot.resize(size);
+
+    for (int i = 0; i < size; i++) {
+        n2c[i] = i;
+        in[i] = gE.selfLoops(i);
+        tot[i] = gE.weightedDegree(i);
+    }
+
+    steps = st;
+    threshold = thr;
+}
+
 void Community::print() const {
     for (int i = 0; i < size; i++)
         cerr << " " << i << "/" << n2c[i] << "/" << in[i] << "/" << tot[i];
@@ -189,4 +211,151 @@ bool Community::step() {
     } while (moves > 0 && ((newModularity - currentModularity) > threshold));
 
     return improvement;
+}
+
+GraphBinary Community::graph() {
+    // Select non-empty communities
+    vector<int> renumber(size, -1);
+    for (int node = 0; node < size; node++) {
+        renumber[n2c[node]]++;
+    }
+
+    // Renumber communities
+    int final = 0;
+    for (int i = 0; i < size; i++)
+        if (renumber[i] != -1)
+            renumber[i] = final++;
+
+    // Compute communities
+    vector<vector<int>> communityNodes(final);
+    n2cNew.clear();
+    n2cNew.resize(size);
+    for (int node = 0; node < size; node++) {
+        communityNodes[renumber[n2c[node]]].push_back(node);
+        n2cNew[node] = renumber[n2c[node]];
+    }
+
+    // Compute weighted graph
+    GraphBinary g2;
+    g2.nNodes = communityNodes.size();
+    g2.degrees.resize(communityNodes.size());
+
+    // For each community, compute the total weight of the community
+    int communityDegree = communityNodes.size();
+    for (int community = 0; community < communityDegree; community++) {
+        map<int, double> m;
+        map<int, double>::iterator it;
+
+        // For each node in the community, find its neighbours and their weights
+        int communitySize = communityNodes[community].size();
+        for (int node = 0; node < communitySize; node++) {
+            pair<vector<unsigned int>::iterator, vector<double>::iterator> p = g.neighbours(communityNodes[community][node]);
+            int deg = g.nNeighbours(communityNodes[community][node]);
+            for (int i = 0; i < deg; i++) {
+                int neighbour = *(p.first + i);
+                int neighbourCommunity = renumber[n2c[neighbour]];
+                double neighbourWeight = (g.weights.size() == 0) ? 1. : *(p.second + i);
+
+                // If the node is the first, initialize the map
+                // Otherwise, update the weight of the neighbour community
+                it = m.find(neighbourCommunity);
+                if (it == m.end())
+                    m.insert(make_pair(neighbourCommunity, neighbourWeight));
+                else
+                    it->second += neighbourWeight;
+            }
+        }
+
+        g2.degrees[community] = (community == 0) ? m.size() : g2.degrees[community - 1] + m.size();
+        g2.nEdges += m.size();
+
+        // Add the community to the graph
+        for (it = m.begin(); it != m.end(); it++) {
+            g2.totalWeight += it->second;
+            g2.edges.push_back(it->first);
+            g2.weights.push_back(it->second);
+        }
+    }
+
+    return g2;
+}
+
+GraphBinary Community::graphNew() {
+    // Select non-empty communities
+    vector<int> renumber(size, -1);
+    for (int node = 0; node < size; node++) {
+        renumber[n2c[node]]++;
+    }
+
+    // Renumber communities
+    int final = 0;
+    for (int i = 0; i < size; i++)
+        if (renumber[i] != -1)
+            renumber[i] = final++;
+
+    // Compute communities
+    vector<vector<int>> communityNodes(final);
+    n2cNew.clear();
+    n2cNew.resize(size);
+    for (int node = 0; node < size; node++) {
+        communityNodes[renumber[n2c[node]]].push_back(node);
+        n2cNew[node] = renumber[n2c[node]];
+    }
+
+    // Compute weighted graph
+    GraphBinary g2;
+    g2.nNodes = communityNodes.size();
+    g2.degrees.resize(communityNodes.size());
+
+    // For each community, compute the total weight of the community
+    int communityDegree = communityNodes.size();
+    for (int community = 0; community < communityDegree; community++) {
+        map<int, float> m;
+        map<int, float>::iterator it;
+
+        // For each node in the community, find its neighbours and their weights
+        int comm_size = communityNodes[community].size();
+        for (int node = 0; node < comm_size; node++) {
+            pair<vector<unsigned int>::iterator, vector<double>::iterator> p = gE.neighbours(communityNodes[community][node]);
+            int deg = gE.nNeighbours(communityNodes[community][node]);
+            for (int i = 0; i < deg; i++) {
+                int neigh = *(p.first + i);
+                int neigh_comm = renumber[n2c[neigh]];
+                double neigh_weight = (gE.weights->size == 0) ? 1. : *(p.second + i);
+
+                // If the node is the first, initialize the map
+                // Otherwise, update the weight of the neighbour community
+                it = m.find(neigh_comm);
+                if (it == m.end())
+                    m.insert(make_pair(neigh_comm, neigh_weight));
+                else
+                    it->second += neigh_weight;
+            }
+
+            p = gE.remoteNeighbours(communityNodes[community][node]);
+            deg = gE.nRemoteNeighbours(communityNodes[community][node]);
+
+            for (int i = 0; i < deg; i++) {
+                int neigh = *(p.first + i);
+                int neigh_comm = renumber[n2c[neigh]];
+                double neigh_weight = (gE.weights->size == 0) ? 1. : *(p.second + i);
+
+                it = m.find(neigh_comm);
+                if (it == m.end())
+                    m.insert(make_pair(neigh_comm, neigh_weight));
+                else
+                    it->second += neigh_weight;
+            }
+        }
+        g2.degrees[community] = (community == 0) ? m.size() : g2.degrees[community - 1] + m.size();
+        g2.nEdges += m.size();
+
+        for (it = m.begin(); it != m.end(); it++) {
+            g2.totalWeight += it->second;
+            g2.edges.push_back(it->first);
+            g2.weights.push_back(it->second);
+        }
+    }
+
+    return g2;
 }

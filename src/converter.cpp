@@ -62,8 +62,8 @@ void parse_args(int argc, char **argv) {
 }
 
 /*
- *This will accept original graph file, partition file and number of partitions.
- *This will partition the graph in to multiple bin files based on number of partitions.
+ * This will accept original graph file, partition file and number of partitions.
+ * This will partition the graph in to multiple bin files based on number of partitions.
  * Each file will will have its local numbering
  * There is a remote file which contain the remote edges.
  * This will have the remote edges and associated partition number
@@ -207,6 +207,7 @@ int main(int argc, char **argv) {
 
     cout << "Mapping done" << endl;
 
+    // TODO: Capire la questione dei weights
     for (int i = 0; i < numberOfPartitions; i++) {
         // Write the remote edges to separate files for each partition
         // Each file will contain the edges that are remote to that partition

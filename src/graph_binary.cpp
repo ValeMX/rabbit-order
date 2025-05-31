@@ -6,6 +6,7 @@ using namespace std;
 
 GraphBinary::GraphBinary() : nNodes(0), nEdges(0), totalWeight(0.0) {}
 
+// TODO: weightsInFile is not used in this constructor, consider removing it or implementing its functionality
 GraphBinary::GraphBinary(char* inFile, char* weightsInFile) {
     ifstream finput(inFile, fstream::in | fstream::binary);
     if (!finput.is_open()) {

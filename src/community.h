@@ -2,16 +2,19 @@
 #define COMMUNITY_H
 
 #include <iostream>
+#include <map>
 #include <stdexcept>
 #include <vector>
-using namespace std;
 
 #include "graph_binary.h"
+#include "graph_extended.h"
+using namespace std;
 
 class Community {
    public:
-    GraphBinary g;  // Graph to compute communities on
-    int size;       // Number of nodes in the graph
+    GraphBinary g;     // Graph to compute communities on
+    GraphExtended gE;  // Extended graph for remote edges (if needed)
+    int size;          // Number of nodes in the graph
 
     vector<int> n2c;     // Node to community mapping
     vector<int> n2cNew;  // New node to community mapping
@@ -27,6 +30,7 @@ class Community {
 
     Community(char *inFile, char *inWeightsFile, int st, double thr);
     Community(GraphBinary gb, int st, double thr);
+    Community(GraphExtended ge, int st, double thr);
 
     void print() const;  // Print the community structure
 
@@ -39,6 +43,9 @@ class Community {
     double modularity() const;  // Compute the modularity of the current community structure
 
     bool step();  // Perform a single step of the community detection algorithm
+
+    GraphBinary graph();
+    GraphBinary graphNew();
 };
 
 #endif  // COMMUNITY_H
