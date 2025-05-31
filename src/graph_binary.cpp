@@ -2,7 +2,6 @@
 
 #include <fstream>
 #include <iostream>
-#include <map>
 using namespace std;
 
 GraphBinary::GraphBinary() : nNodes(0), nEdges(0), totalWeight(0.0) {}
