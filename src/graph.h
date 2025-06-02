@@ -11,6 +11,7 @@ class Graph {
 
     Graph(string fileName = "");
     Graph(vector<pair<int, int>> edgeList);
+    Graph(vector<pair<int, int>> edgeList, vector<double> weights);
 
     void addEdge(int src, int dst, double weight);
 

@@ -30,6 +30,17 @@ Graph::Graph(vector<pair<int, int>> edgeList) {
     }
 }
 
+Graph::Graph(vector<pair<int, int>> edgeList, vector<double> weights) {
+    if (edgeList.size() != weights.size()) {
+        cerr << "Error: edge list and weights size mismatch." << endl;
+        return;
+    }
+
+    for (unsigned int i = 0; i < edgeList.size(); i++) {
+        addEdge(edgeList[i].first - 1, edgeList[i].second - 1, weights[i]);
+    }
+}
+
 void Graph::addEdge(int src, int dst, double weight) {
     // Ensure the list is large enough to hold the nodes
     if (edges.size() <= max(src, dst) + 1) {

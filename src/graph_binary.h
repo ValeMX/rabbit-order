@@ -18,7 +18,7 @@ class GraphBinary {
 
     GraphBinary();
     GraphBinary(char* inFile, char* weightsInFile);
-    GraphBinary(unsigned int nNodes, unsigned long Edges, double totalWeight, int* degrees, int* edges, double* weights);
+    GraphBinary(unsigned int nNodes, unsigned long nEdges, double totalWeight, int* degrees, int* edges, double* weights);
 
     unsigned int nNeighbours(unsigned int node);  // Get the number of neighbors of a node
     double weightedDegree(unsigned int node);     // Compute the weighted degree of a node
