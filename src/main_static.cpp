@@ -33,6 +33,7 @@ struct GraphData {
 };
 
 char *fileName = NULL;
+vector<unsigned int> startingNodes;
 
 vector<pair<int, int>> remoteMap(10, make_pair(-1, -1));
 
@@ -40,6 +41,14 @@ void display_time(const char *str) {
     time_t rawtime;
     time(&rawtime);
     cerr << str << ": " << ctime(&rawtime);
+}
+
+int owner(unsigned int nodeGlobal) {
+    for (int i = 0; i < startingNodes.size() - 1; ++i) {
+        if (startingNodes[i] <= nodeGlobal && nodeGlobal < startingNodes[i + 1])
+            return i;
+    }
+    return startingNodes.size() - 1;  // Ultimo processo
 }
 
 int main(int argc, char **argv) {
@@ -60,6 +69,9 @@ int main(int argc, char **argv) {
     // TODO: Set number of threads for OpenMP
     // omp_set_num_threads(num_threads);
 
+    // ----------------------------------------------------------------
+    // Distribute Graph
+    // ----------------------------------------------------------------
     GraphBinary localGraph;
 
     if (rank == 0) {
@@ -83,355 +95,202 @@ int main(int argc, char **argv) {
 
         // Send partitioned data to all processes: nodes, cumulative degrees, edges, and weights
         for (unsigned int i = 1; i < size; i++) {
-            
+            int count = p.partitionEdges[i].size();
+            int bytes = count * sizeof(pair<unsigned int, unsigned int>);
+            MPI_Send(&count, 1, MPI_INT, i, 0, MPI_COMM_WORLD);                                                     // Send number of edges
+            MPI_Send(reinterpret_cast<void *>(p.partitionEdges[i].data()), bytes, MPI_BYTE, i, 1, MPI_COMM_WORLD);  // Send edges
+            MPI_Send(p.partitionWeights[i].data(), count, MPI_DOUBLE, i, 2, MPI_COMM_WORLD);                        // Send weights
         }
 
+        // Initialize local graph with partitioned data
+        localGraph.nEdges = p.partitionEdges[0].size();
+        localGraph.edgeList = p.partitionEdges[0];
+        localGraph.weightList = p.partitionWeights[0];
     } else {
-        MPI_Recv(&localGraph.nNodes, 1, MPI_INT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        // Receive partitioned data from the root process
+        int count;
+        int bytes = count * sizeof(pair<unsigned int, unsigned int>);
+        MPI_Status status;
 
-        localGraph.degrees.resize(localGraph.nNodes);
-        MPI_Recv(localGraph.degrees.data(), localGraph.nNodes, MPI_LONG, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(&count, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);  // Receive number of edges
 
-        localGraph.nEdges = localGraph.degrees[localGraph.nNodes - 1];
-        localGraph.edges.resize(localGraph.nEdges);
-        localGraph.weights.resize(localGraph.nEdges);
+        localGraph.nEdges = count;
+        localGraph.edgeList.resize(count);
+        localGraph.weightList.resize(count);
 
-        MPI_Recv(localGraph.edges.data(), localGraph.nEdges, MPI_INT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        MPI_Recv(localGraph.weights.data(), localGraph.nEdges, MPI_FLOAT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(localGraph.edgeList.data(), bytes, MPI_BYTE, 0, 1, MPI_COMM_WORLD, &status);      // Receive edges
+        MPI_Recv(localGraph.weightList.data(), count, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD, &status);  // Receive weights
     }
 
-    vector<pair<int, int>> remoteMap;
+    // ----------------------------------------------------------------
+    // Graph Initialization
+    // ----------------------------------------------------------------
 
-    ifstream remoteFileStream(r.c_str());
+    localGraph.init();
+    Community c(localGraph, -1, 0.0);  // Initialize community structure with local graph
 
-    // Map to store remote edges
-    vector<int> rSource;       // Local vertex IDs
-    vector<int> rDestination;  // Remote vertex IDs
-    vector<int> rPartition;    // Partition IDs
-    MPI_Status status;
+    // ----------------------------------------------------------------
+    // Exchanging starting node
+    // ----------------------------------------------------------------
 
-    // Read remote edges from the file
-    // Each line contains a local vertex and its mapping to a remote vertex and partition
-    for (string line; getline(remoteFileStream, line);) {
-        vector<string> parts = split(line, ' ');
-        string localV = parts[0];
-        string mapping = parts[1];
-        unsigned int source = atoi(localV.c_str());
+    startingNodes.resize(size);
+    MPI_Allgather(&localGraph.startingNode, 1, MPI_UNSIGNED, startingNodes.data(), 1, MPI_UNSIGNED, MPI_COMM_WORLD);
 
-        vector<string> mappingParts = split(mapping, ',');
+    // ----------------------------------------------------------------
+    // Collection of remote edges
+    // ----------------------------------------------------------------
 
-        int destination = atoi(mappingParts[0].c_str());
-        int partition = atoi(mappingParts[1].c_str());
+    vector<unsigned int> getList;         // List of remote nodes to retrieve
+    vector<unsigned int> getProcessList;  // List of processes to get remote nodes from
+    vector<unsigned int> shareList;       // List of nodes to share
+    for (const auto &vertex : localGraph.neighboursList) {
+        unsigned int node = vertex.first;
+        unsigned int globalNode = localGraph.localToGlobal[node];  // Get the global id of the node
+        vector<unsigned int> remoteNeighbours = localGraph.remoteNeighbours(node);
 
-        if (remoteMap.size() <= source) {
-            remoteMap.resize(source + 1, make_pair(-1, -1));
-        }
-
-        remoteMap[source] = make_pair(destination, partition);
-
-        rSource.push_back(source);
-        rDestination.push_back(destination);
-        rPartition.push_back(partition);
-    }
-
-    char *tmp = new char[s.length() + 1];
-    strcpy(tmp, s.c_str());
-
-    Community c(tmp, NULL, -1, precision);
-
-    GraphBinary g;
-    bool improvement = true;
-    double modularity = c.modularity(), newModularity;
-    int level = 0;
-
-    improvement = c.step();
-    newModularity = c.modularity();
-
-    // if (++level == display_level)
-    //     g.display();
-    // if (display_level == -1)
-    //     c.display_partition();
-
-    g = c.graph();
-
-#pragma omp parallel for
-    for (unsigned int i = 0; i < rSource.size(); i++) {
-        rSource[i] = c.n2cNew[rSource[i]];  // Re-number the source vertices
-    }
-
-    int *levelOneNodes = new int[size];
-    unsigned long *levelOneDegree = new unsigned long[size];
-
-    levelOneNodes[rank] = g.nNodes;
-    levelOneDegree[rank] = g.degrees[g.degrees.size() - 1];
-
-    MPI_Request request[2 * size - 2];  // Requests for non-blocking communication
-    MPI_Status st[2 * size - 2];        // Status for the requests
-
-    // Gather information about the number of nodes and final degree from all processes
-    int id = 0;
-    for (int i = 0; i < size; i++) {
-        if (i != rank) {
-            MPI_Irecv(&levelOneNodes[i], 1, MPI_INT, i, 1, MPI_COMM_WORLD, &request[id++]);
-            MPI_Irecv(&levelOneDegree[i], 1, MPI_UNSIGNED_LONG, i, 2, MPI_COMM_WORLD, &request[id++]);
-        }
-    }
-
-    for (int i = 0; i < size; i++) {
-        if (i != rank) {
-            MPI_Send(&g.nNodes, 1, MPI_INT, i, 1, MPI_COMM_WORLD);
-            MPI_Send(&g.degrees[g.degrees.size() - 1], 1, MPI_UNSIGNED_LONG, i, 2, MPI_COMM_WORLD);
-        }
-    }
-
-    MPI_Waitall(2 * size - 2, request, st);
-
-    // Create gaps for re-numbering nodes across processes
-    // For each process, calculate the gap based on the number of nodes
-    int gap = 0;
-    int *gaps = new int[size];
-    for (int i = 0; i < size; i++) {
-        gaps[i] = gap;
-        if (i != rank)
-            gap += levelOneNodes[i];
-        else
-            gap += g.nNodes;
-    }
-
-#pragma omp parallel for
-    for (unsigned int i = 0; i < g.edges.size(); i++) {
-        g.edges[i] += gaps[rank];
-    }
-
-#pragma omp parallel for
-    for (unsigned int i = 0; i < rSource.size(); i++) {
-        rSource[i] += gaps[rank];
-    }
-
-#pragma omp parallel for
-    for (unsigned int i = 0; i < c.n2cNew.size(); i++) {
-        c.n2cNew[i] += gaps[rank];
-    }
-
-    // Update the degrees of the graph based on the gaps calculated
-    unsigned long degreeGap = 0;
-    for (int i = 0; i < rank; i++) {
-        degreeGap += levelOneDegree[i];
-    }
-
-    if (rank != 0)
-        for (unsigned int i = 0; i < g.degrees.size(); i++) {
-            g.degrees[i] += degreeGap;
-        }
-
-    modularity = newModularity;
-    // Each process sends its graph data to the root process (rank 0)
-    if (rank != 0) {
-        MPI_Send(&g.nEdges, 1, MPI_LONG, 0, 1, MPI_COMM_WORLD);          // Send number of edges
-        MPI_Send(&g.nNodes, 1, MPI_INT, 0, 1, MPI_COMM_WORLD);           // Send number of nodes
-        MPI_Ssend(&g.totalWeight, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);  // Send total weight of graph
-
-        int nEdges = g.edges.size();
-        MPI_Ssend(&nEdges, 1, MPI_INT, 0, 1, MPI_COMM_WORLD);                             // Send number of edges
-        MPI_Ssend(&g.edges.front(), g.edges.size(), MPI_INT, 0, 1, MPI_COMM_WORLD);       // Send edges
-        MPI_Ssend(&g.degrees.front(), g.degrees.size(), MPI_LONG, 0, 1, MPI_COMM_WORLD);  // Send degrees
-
-        int nWeights = g.weights.size();
-        MPI_Ssend(&nWeights, 1, MPI_INT, 0, 1, MPI_COMM_WORLD);                            // Send number of weights
-        MPI_Ssend(&g.weights.front(), g.weights.size(), MPI_FLOAT, 0, 1, MPI_COMM_WORLD);  // Send weights
-
-        int rSize = rSource.size();
-        MPI_Ssend(&rSize, 1, MPI_INT, 0, 1, MPI_COMM_WORLD);                                   // Send number of remote edges
-        MPI_Ssend(&rSource.front(), rSource.size(), MPI_INT, 0, 1, MPI_COMM_WORLD);            // Send remote source vertices
-        MPI_Ssend(&rDestination.front(), rDestination.size(), MPI_INT, 0, 1, MPI_COMM_WORLD);  // Send remote destination vertices
-        MPI_Ssend(&rPartition.front(), rPartition.size(), MPI_INT, 0, 1, MPI_COMM_WORLD);      // Send remote partition IDs
-
-        int n2cSize = c.n2cNew.size();
-        MPI_Ssend(&n2cSize, 1, MPI_INT, 0, 1, MPI_COMM_WORLD);                         // Send size of n2cNew
-        MPI_Ssend(&c.n2cNew.front(), c.n2cNew.size(), MPI_INT, 0, 1, MPI_COMM_WORLD);  // Send n2cNew
-    }
-    if (rank == 0) {
-        // Rank 0 collects data from all processes
-        GraphData data[size - 1];
-
-        int total_nodes = 0;
-        for (int i = 1; i < size; i++) {
-            MPI_Recv(&data[i - 1].nEdges, 1, MPI_LONG, i, 1, MPI_COMM_WORLD, &status);         // Receive number of edges
-            MPI_Recv(&data[i - 1].nNodes, 1, MPI_INT, i, 1, MPI_COMM_WORLD, &status);          // Receive number of nodes
-            MPI_Recv(&data[i - 1].totalWeight, 1, MPI_DOUBLE, i, 1, MPI_COMM_WORLD, &status);  // Receive total weight of graph
-
-            int nEdges;
-            MPI_Recv(&nEdges, 1, MPI_INT, i, 1, MPI_COMM_WORLD, &status);  // Receive number of edges
-
-            data[i - 1].edges.resize(nEdges);
-            data[i - 1].degrees.resize(data[i - 1].nNodes);
-            MPI_Recv(&data[i - 1].edges.front(), nEdges, MPI_INT, i, 1, MPI_COMM_WORLD, &status);                 // Receive edges
-            MPI_Recv(&data[i - 1].degrees.front(), data[i - 1].nNodes, MPI_LONG, i, 1, MPI_COMM_WORLD, &status);  // Receive degrees
-
-            int nWeights;
-            data[i - 1].weights.resize(nWeights);
-            MPI_Recv(&nWeights, 1, MPI_INT, i, 1, MPI_COMM_WORLD, &status);                              // Receive number of weights
-            MPI_Recv(&data[i - 1].weights.front(), nWeights, MPI_FLOAT, i, 1, MPI_COMM_WORLD, &status);  // Receive weights
-
-            int rSize;
-            data[i - 1].rSource.resize(rSize);
-            data[i - 1].rDestination.resize(rSize);
-            data[i - 1].rPartition.resize(rSize);
-            MPI_Recv(&rSize, 1, MPI_INT, i, 1, MPI_COMM_WORLD, &status);                                 // Receive number of remote edges
-            MPI_Recv(&data[i - 1].rSource.front(), rSize, MPI_INT, i, 1, MPI_COMM_WORLD, &status);       // Receive remote source vertices
-            MPI_Recv(&data[i - 1].rDestination.front(), rSize, MPI_INT, i, 1, MPI_COMM_WORLD, &status);  // Receive remote destination vertices
-            MPI_Recv(&data[i - 1].rPartition.front(), rSize, MPI_INT, i, 1, MPI_COMM_WORLD, &status);    // Receive remote partition IDs
-
-            int n2cSize;
-            data[i - 1].n2c.resize(n2cSize);
-            MPI_Recv(&n2cSize, 1, MPI_INT, i, 1, MPI_COMM_WORLD, &status);                        // Receive size of n2cNew
-            MPI_Recv(&data[i - 1].n2c.front(), n2cSize, MPI_INT, i, 1, MPI_COMM_WORLD, &status);  // Receive n2cNew
-
-            total_nodes += data[i - 1].nNodes;
-        }
-
-        // Construct new graph for next iteration
-        GraphExtended newG = GraphExtended();
-
-        newG.nNodes = g.nNodes;
-        newG.nEdges = 0;
-        newG.totalWeight = 0;
-
-        // Merge received graphs into newG
-        for (int i = 0; i < size; i++) {
-            if (i == 0) {  // Local graph
-                newG.degrees->extend(g.degrees);
-                newG.edges->extend(g.edges);
-                newG.weights->extend(g.weights);
-                newG.nEdges += g.nEdges;
-                newG.totalWeight += g.totalWeight;
-            } else {
-                newG.degrees->extend(data[i - 1].degrees);
-                newG.edges->extend(data[i - 1].edges);
-                newG.weights->extend(data[i - 1].weights);
-                newG.nEdges += data[i - 1].nEdges;
-                newG.totalWeight += data[i - 1].totalWeight;
-                newG.nNodes += data[i - 1].nNodes;
+        for (const auto &remoteNode : remoteNeighbours) {
+            unsigned int remoteGlobalNode = localGraph.localToGlobal[remoteNode];  // Get the global id of the remote node
+            if (find(getList.begin(), getList.end(), remoteGlobalNode) == getList.end()) {
+                getList.push_back(remoteGlobalNode);  // Add remote node to the get list if not already present
+            }
+            if (find(getProcessList.begin(), getProcessList.end(), owner(remoteGlobalNode)) == getProcessList.end()) {
+                getProcessList.push_back(owner(remoteGlobalNode));  // Add the owner process of the remote node to the get process list
+            }
+            if (find(shareList.begin(), shareList.end(), globalNode) == shareList.end()) {
+                shareList.push_back(globalNode);  // Add the local node to the share list if not already present
             }
         }
-
-        map<int, vector<unsigned int>> re;
-        map<int, vector<double>> rw;
-        for (int i = 0; i < size; i++) {
-            // For root process, merge remote edges
-            if (i == 0) {
-                // Create a map to store remote edges and their weights
-                // Key is a pair of (node, community), value is the weight
-                map<pair<int, unsigned int>, double> m;
-                map<pair<int, unsigned int>, double>::iterator it;
-                for (unsigned int j = 0; j < rSource.size(); j++) {
-                    int destination = rDestination[j];
-                    int destinationPartition = rPartition[j];
-                    int target = data[destinationPartition - 1].n2c[destination];
-
-                    it = m.find(make_pair(rSource[j], target));
-
-                    if (it == m.end()) {
-                        m.insert(make_pair(make_pair(rSource[j], target), 1.0f));
-                    } else {
-                        it->second += 1.0f;
-                    }
-                }
-
-                newG.nEdges += m.size();
-
-                map<int, vector<unsigned int>>::iterator remoteEdgeIt;
-                map<int, vector<double>>::iterator remoteWeightsIt;
-
-                for (it = m.begin(); it != m.end(); it++) {
-                    pair<int, unsigned int> e = it->first;
-                    double w = it->second;
-
-                    remoteEdgeIt = re.find(e.first);
-                    remoteWeightsIt = rw.find(e.first);
-
-                    if (remoteEdgeIt == re.end()) {
-                        vector<unsigned int> list;
-                        list.push_back(e.second);
-                        re.insert(make_pair(e.first, list));
-
-                        vector<double> wList;
-                        wList.push_back(w);
-                        rw.insert(make_pair(e.first, wList));
-                    } else {
-                        remoteEdgeIt->second.push_back(e.second);
-                        if (remoteWeightsIt != rw.end()) {
-                            remoteWeightsIt->second.push_back(w);
-                        }
-                    }
-                }
-            } else {
-                map<pair<int, unsigned int>, float> m;
-                map<pair<int, unsigned int>, float>::iterator it;
-
-                for (unsigned int j = 0; j < data[i - 1].rSource.size(); j++) {
-                    int destination = data[i - 1].rDestination[j];
-                    int destinationPartition = data[i - 1].rPartition[j];
-                    int target;
-
-                    if (destinationPartition == 0) {
-                        target = c.n2cNew[destination];
-                    } else {
-                        target = data[destinationPartition - 1].n2c[destination];
-                    }
-
-                    it = m.find(make_pair(data[i - 1].rSource[j], target));
-                    if (it == m.end()) {
-                        m.insert(make_pair(make_pair(data[i - 1].rSource[j], target), 1.0f));
-                    } else {
-                        it->second += 1.0f;
-                    }
-                }
-
-                newG.nEdges += m.size();
-
-                map<int, vector<unsigned int>>::iterator remoteEdgeIt;
-                map<int, vector<double>>::iterator remoteWIt;
-
-                for (it = m.begin(); it != m.end(); it++) {
-                    pair<int, int> e = it->first;
-                    double w = it->second;
-
-                    remoteEdgeIt = re.find(e.first);
-                    remoteWIt = rw.find(e.first);
-
-                    if (remoteEdgeIt == re.end()) {
-                        vector<unsigned int> list;
-                        list.push_back(e.second);
-                        re.insert(make_pair(e.first, list));
-
-                        vector<double> wList;
-                        wList.push_back(w);
-                        rw.insert(make_pair(e.first, wList));
-
-                    } else {
-                        remoteEdgeIt->second.push_back(e.second);
-                        if (remoteWIt != rw.end()) {
-                            remoteWIt->second.push_back(w);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Update the graph with remote edges
-        newG.addRemoteEdges(re, rw);
-
-        // Print results
-        newG.print();
     }
 
-    MPI_Finalize();
+    /*
+    The window will be set up as follows:
+    - The first part contains the size of the share list (unsigned).
+    - The second part contains a map of (id, startingByte) for each shared vertex.
+    - The third part contains (community, degree, adjacency list) for each shared vertex.
+    */
 
-    time(&timeEnd);
+    // Setting up the windows
+    unsigned long mapSize = (sizeof(unsigned int) + sizeof(unsigned long)) * shareList.size();
+    unsigned long listSize = 0;
+    for (const auto &vertex : shareList) {
+        listSize += sizeof(unsigned int) + sizeof(double);                                     // community, degree
+        listSize += localGraph.nNeighbours(vertex) * (sizeof(unsigned int) + sizeof(double));  // adjacency list
+    }
 
-    display_time("End");
-    cerr << "Total duration: " << (timeEnd - timeBegin) << " sec." << endl;
+    unsigned long windowSize = sizeof(unsigned int) +  // The number of shared verteices
+                               mapSize +               // The map with (vertex, startingByte) for each shared vertex
+                               listSize;               // The list with (id, community, degree, adjacency list) for each shared vertex
 
-    return 0;
+    uint8_t *windowBuffer = new uint8_t[windowSize];
+
+    unsigned int shareListSize = shareList.size();
+    memcpy(windowBuffer, &shareListSize, sizeof(unsigned int));  // Store the size of the share list at the beginning of the buffer
+
+    unsigned long lastByte = sizeof(unsigned int) + mapSize;  // Last byte written in the windowBuffer
+    for (unsigned int i = 0; i < shareListSize; i++) {
+        unsigned int vertex = shareList[i];
+        memcpy(windowBuffer + sizeof(unsigned int) + i * (sizeof(unsigned int) + sizeof(unsigned long)),
+               &vertex, sizeof(unsigned int));  // Store the vertex id in the map
+        unsigned long startingByte = lastByte;  // Starting byte for the vertex in the windowBuffer
+        memcpy(windowBuffer + sizeof(unsigned int) + i * (sizeof(unsigned int) + sizeof(unsigned long)) + sizeof(unsigned int),
+               &startingByte, sizeof(unsigned long));  // Store the starting byte for the vertex
+
+        unsigned int localId = localGraph.globalToLocal[vertex];  // Get the local id of the vertex
+
+        unsigned int numberOfNeighbours = localGraph.nNeighbours(localId);  // Get the number of neighbours for the vertex
+        unsigned int community = localGraph.localToGlobal[c.n2c[localId]];  // Get the community of the vertex
+        double degree = localGraph.weightedDegree(localId);                 // Get the weighted degree of the vertex
+
+        memcpy(windowBuffer + lastByte, &community, sizeof(unsigned int));  // Store the community id
+        lastByte += sizeof(unsigned int);
+        memcpy(windowBuffer + lastByte, &degree, sizeof(double));  // Store the weighted degree
+        lastByte += sizeof(double);
+
+        // Store the adjacency list for the vertex
+        for (const auto &neighbour : localGraph.neighboursList[localId]) {
+            unsigned int neighbourId = localGraph.localToGlobal[neighbour.first];  // Get the global id of the neighbour
+            double weight = neighbour.second;                                      // Get the weight of the edge
+
+            memcpy(windowBuffer + lastByte, &neighbourId, sizeof(unsigned int));  // Store the neighbour id
+            lastByte += sizeof(unsigned int);
+            memcpy(windowBuffer + lastByte, &weight, sizeof(double));  // Store the weight of the edge
+            lastByte += sizeof(double);
+        }
+    }
+
+    // Share the window size with all processes
+    vector<unsigned long> windowSizes(size);
+    unsigned long localWindowSize = windowSize;
+
+    MPI_Allgather(&localWindowSize, 1, MPI_UNSIGNED_LONG, windowSizes.data(), 1, MPI_UNSIGNED_LONG, MPI_COMM_WORLD);
+
+    MPI_Win window;
+    MPI_Win_create(windowBuffer, windowSize, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &window);  // Create a window for shared memory
+
+    MPI_Win_fence(0, window);  // Synchronize all processes before accessing the window
+
+    // Gather remote edges from needed processes
+    vector<uint8_t *> remoteBuffers(size);
+    for (const auto &process : getProcessList) {
+        if (process == rank) continue;  // Skip if the process is the current one
+
+        unsigned long remoteWindowSize = windowSizes[process];
+        remoteBuffers[process] = new uint8_t[remoteWindowSize];  // Allocate buffer for remote data
+
+        MPI_Get(remoteBuffers[process], remoteWindowSize, MPI_BYTE, process, 0, remoteWindowSize, MPI_BYTE, window);  // Get remote data
+    }
+
+    MPI_Win_fence(0, window);  // Synchronize all processes after accessing the window
+
+    // Update the local graph with remote edges
+    for (const auto &process : getProcessList) {
+        if (process == rank) continue;  // Skip if the process is the current one
+
+        unsigned long remoteWindowSize = windowSizes[process];
+        unsigned int remoteShareListSize = *reinterpret_cast<unsigned int *>(remoteBuffers[process]);
+        unsigned long offset = sizeof(unsigned int);  // Offset to the start of the map
+
+        for (unsigned int i = 0; i < remoteShareListSize; i++) {
+            unsigned int vertex = *reinterpret_cast<unsigned int *>(remoteBuffers[process] + offset);
+            if (find(getList.begin(), getList.end(), vertex) == getList.end()) {
+                offset += sizeof(unsigned int) + sizeof(unsigned long);  // Skip if the vertex is not in the get list
+                continue;
+            }
+            offset += sizeof(unsigned int);  // Move to the next part of the map
+            unsigned long startingByte = *reinterpret_cast<unsigned long *>(remoteBuffers[process] + offset);
+            offset += sizeof(unsigned long);  // Move to the next part of the map
+
+            unsigned long nextStartingByte = (i + 1 < remoteShareListSize) ? *reinterpret_cast<unsigned long *>(remoteBuffers[process] + offset + sizeof(unsigned int)) : remoteWindowSize;
+
+            unsigned int community = *reinterpret_cast<unsigned int *>(remoteBuffers[process] + startingByte);
+            startingByte += sizeof(unsigned int);  // Move to the degree
+            double degree = *reinterpret_cast<double *>(remoteBuffers[process] + startingByte);
+            startingByte += sizeof(double);  // Move to the adjacency list
+
+            unsigned long adjacencyListSize = (nextStartingByte - startingByte) / (sizeof(unsigned int) + sizeof(double));  // Calculate the size of the adjacency list
+
+            // Add the remote edges to the local graph
+            for (unsigned long j = 0; j < adjacencyListSize; j++) {
+                unsigned int neighbourId = *reinterpret_cast<unsigned int *>(remoteBuffers[process] + startingByte);
+                startingByte += sizeof(unsigned int);  // Move to the weight
+                double weight = *reinterpret_cast<double *>(remoteBuffers[process] + startingByte);
+                startingByte += sizeof(double);  // Move to the next neighbour
+
+                localGraph.addEdge(vertex, neighbourId, weight);  // Add the edge to the local graph
+            }
+
+            unsigned int localId = localGraph.globalToLocal[vertex];            // Get the local id of the vertex
+            unsigned int localCommunity = localGraph.globalToLocal[community];  // Get the local id of the community
+            c.updateRemote(localId, localCommunity, degree);                    // Update the community structure with the remote node
+        }
+
+        delete[] remoteBuffers[process];  // Deallocate remote buffer
+    }
+
+    MPI_Win_free(&window);  // Free the window after use
+    delete[] windowBuffer;  // Deallocate the window buffer
+
+    c.step();  // Perform a step in the community detection algorithm
+
+    
 }

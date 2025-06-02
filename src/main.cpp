@@ -293,9 +293,9 @@ int main(int argc, char **argv) {
         MPI_Ssend(&g.edges.front(), g.edges.size(), MPI_INT, 0, 1, MPI_COMM_WORLD);       // Send edges
         MPI_Ssend(&g.degrees.front(), g.degrees.size(), MPI_LONG, 0, 1, MPI_COMM_WORLD);  // Send degrees
 
-        int nWeights = g.weights.size();
+        int nWeights = g.weightList.size();
         MPI_Ssend(&nWeights, 1, MPI_INT, 0, 1, MPI_COMM_WORLD);                            // Send number of weights
-        MPI_Ssend(&g.weights.front(), g.weights.size(), MPI_FLOAT, 0, 1, MPI_COMM_WORLD);  // Send weights
+        MPI_Ssend(&g.weightList.front(), g.weightList.size(), MPI_FLOAT, 0, 1, MPI_COMM_WORLD);  // Send weights
 
         int rSize = rSource.size();
         MPI_Ssend(&rSize, 1, MPI_INT, 0, 1, MPI_COMM_WORLD);                                   // Send number of remote edges
@@ -359,7 +359,7 @@ int main(int argc, char **argv) {
             if (i == 0) {  // Local graph
                 newG.degrees->extend(g.degrees);
                 newG.edges->extend(g.edges);
-                newG.weights->extend(g.weights);
+                newG.weights->extend(g.weightList);
                 newG.nEdges += g.nEdges;
                 newG.totalWeight += g.totalWeight;
             } else {
