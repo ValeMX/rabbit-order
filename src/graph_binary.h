@@ -12,19 +12,19 @@ using namespace std;
 
 class GraphBinary {
    public:
-    unsigned int startingNode;  // Starting node for the graph (global index)
+    unsigned int startingNode;  // Starting node for the graph
     unsigned int nNodes;        // Number of nodes
     unsigned long nEdges;       // Number of edges
     double totalWeight;         // Total weight of the graph
 
-    vector<pair<unsigned int, unsigned int>> edgeList;  // List of edges in the graph (global indices)
-    vector<double> weightList;                          // Weights of the edges (global indices)
+    vector<pair<unsigned int, unsigned int>> edgeList;  // List of edges in the graph
+    vector<double> weightList;                          // Weights of the edges
 
-    map<unsigned int, vector<pair<unsigned int, double>>> neighboursList;        // Adjacency list representation (local indices)
-    map<unsigned int, vector<pair<unsigned int, double>>> remoteNeighboursList;  // Remote adjacency list representation (local indices)
+    map<unsigned int, vector<pair<unsigned int, double>>> neighboursList;        // Adjacency list representation
+    map<unsigned int, vector<pair<unsigned int, double>>> remoteNeighboursList;  // Remote adjacency list representation
 
-    unordered_set<unsigned int> localNodes;   // Local nodes in the graph (local indices)
-    unordered_set<unsigned int> remoteNodes;  // Remote nodes in the graph (local indices)
+    unordered_set<unsigned int> localNodes;   // Local nodes in the graph
+    unordered_set<unsigned int> remoteNodes;  // Remote nodes in the graph
 
     GraphBinary();
     GraphBinary(char* inFile, char* weightsInFile);
@@ -44,7 +44,7 @@ class GraphBinary {
     double remoteWeightedDegree(unsigned int node);  // Compute the weighted degree of a remote node
     double remoteSelfLoops(unsigned int node);       // Compute the self-loops of a remote node
 
-    void addEdge(unsigned int source, unsigned int destination, double weight);  // Add an edge to the graph (global indices)
+    void addEdge(unsigned int source, unsigned int destination, double weight);  // Add an edge to the graph
 };
 
 #endif  // GRAPH_BINARY_H
