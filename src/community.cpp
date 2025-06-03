@@ -44,18 +44,9 @@ void Community::insert(int node, int community, double weightNodeToCommunity) {
 }
 
 void Community::insert(int node, int community, double weightNodeToCommunity, double weight, double selfLoops) {
-    if (g.globalToLocal.find(node) == g.globalToLocal.end()) {
-        unsigned int newId = g.localToGlobal.size();
-        g.globalToLocal[node] = newId;    // Add the node to the global to local mapping
-        g.localToGlobal.push_back(node);  // Add the node to the local to global mapping
-    }
-
-    unsigned int localNode = g.globalToLocal[node];            // Get the local index of the node
-    unsigned int localCommunity = g.globalToLocal[community];  // Get the local index of the community
-
-    tot[localCommunity] += weight;                                // Update the total weight of the community
-    in[localCommunity] += 2 * weightNodeToCommunity + selfLoops;  // Update the internal weight of the community
-    n2c[localNode] = localCommunity;                              // Assign the node to the specified community
+    tot[community] += weight;                                // Update the total weight of the community
+    in[community] += 2 * weightNodeToCommunity + selfLoops;  // Update the internal weight of the community
+    n2c[node] = community;                                   // Assign the node to the specified community
 }
 
 void Community::remove(int node, int community, double weightNodeToCommunity) {

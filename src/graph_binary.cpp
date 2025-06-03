@@ -6,16 +6,10 @@ using namespace std;
 
 GraphBinary::GraphBinary() : nNodes(0), nEdges(0), totalWeight(0.0) {}
 
-// TODO: weightsInFile is not used in this constructor, consider removing it or implementing its functionality
-
-void GraphBinary::renumber() {
-    // Renumber the nodes in the graph
-    globalToLocal.clear();
-    localToGlobal.clear();
+void GraphBinary::init() {
     localNodes.clear();
     remoteNodes.clear();
 
-    // Compute all nodes to remap
     std::unordered_set<unsigned int> visibleNodes;
     for (const auto& edge : edgeList) {
         unsigned int src = edge.first;
@@ -26,28 +20,17 @@ void GraphBinary::renumber() {
         startingNode = min(startingNode, src);
     }
 
-    // Create mappings from global to local indices
-    unsigned int localId = 0;
-    for (const auto& node : visibleNodes) {
-        globalToLocal[node] = localId++;
-        localToGlobal.push_back(node);
-    }
-
     // Local nodes are those that are sources in the edge list
     for (const auto& edge : edgeList) {
-        localNodes.insert(globalToLocal[edge.first]);
+        localNodes.insert(edge.first);
     }
 
     // Remote nodes are those that are not in localNodes
     for (const auto& node : visibleNodes) {
-        if (localNodes.find(globalToLocal[node]) == localNodes.end()) {
-            remoteNodes.insert(globalToLocal[node]);
+        if (localNodes.find(node) == localNodes.end()) {
+            remoteNodes.insert(node);
         }
     }
-}
-
-void GraphBinary::init() {
-    renumber();  // Ensure nodes are renumbered before initialization
 
     nNodes = localNodes.size();
     nEdges = edgeList.size();
@@ -59,14 +42,11 @@ void GraphBinary::init() {
 
     // Populate neighbours list
     for (unsigned int i = 0; i < nEdges; i++) {
-        unsigned int globalSrc = edgeList[i].first;
-        unsigned int globalDst = edgeList[i].second;
+        unsigned int src = edgeList[i].first;
+        unsigned int dst = edgeList[i].second;
         double weight = weightList.empty() ? 1.0 : weightList[i];
 
-        unsigned int localSrc = globalToLocal[globalSrc];
-        unsigned int localDst = globalToLocal[globalDst];
-
-        neighboursList[localSrc].emplace_back(localDst, weight);
+        neighboursList[src].emplace_back(dst, weight);
     }
 }
 
@@ -165,26 +145,10 @@ double GraphBinary::remoteSelfLoops(unsigned int node) {
 }
 
 void GraphBinary::addEdge(unsigned int source, unsigned int destination, double weight) {
-    // Ideally, source is already in globalToLocal, if not, we add it
-    if (globalToLocal.find(source) == globalToLocal.end()) {
-        unsigned int newId = localToGlobal.size();
-        globalToLocal[source] = newId;
-        localToGlobal.push_back(source);
-    }
-
-    if (globalToLocal.find(destination) == globalToLocal.end()) {
-        unsigned int newId = localToGlobal.size();
-        globalToLocal[destination] = newId;
-        localToGlobal.push_back(destination);
-    }
-
-    unsigned int localSrc = globalToLocal[source];
-    unsigned int localDst = globalToLocal[destination];
-
     // Add the edge to the remoteNeighboursList if it's a remote edge
-    if (isRemote(localSrc)) {
-        remoteNeighboursList[localSrc].emplace_back(localDst, weight);
+    if (isRemote(source)) {
+        remoteNeighboursList[source].emplace_back(destination, weight);
     } else {
-        neighboursList[localSrc].emplace_back(localDst, weight);
+        neighboursList[source].emplace_back(destination, weight);
     }
 }

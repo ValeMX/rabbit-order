@@ -23,9 +23,6 @@ class GraphBinary {
     map<unsigned int, vector<pair<unsigned int, double>>> neighboursList;        // Adjacency list representation (local indices)
     map<unsigned int, vector<pair<unsigned int, double>>> remoteNeighboursList;  // Remote adjacency list representation (local indices)
 
-    unordered_map<unsigned int, unsigned int> globalToLocal;  // Mapping from global node index to local index
-    std::vector<unsigned int> localToGlobal;                  // Mapping from local node index to global index
-
     unordered_set<unsigned int> localNodes;   // Local nodes in the graph (local indices)
     unordered_set<unsigned int> remoteNodes;  // Remote nodes in the graph (local indices)
 

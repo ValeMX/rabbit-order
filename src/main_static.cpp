@@ -41,6 +41,7 @@ void display_time(const char *str) {
     cerr << str << ": " << ctime(&rawtime);
 }
 
+// TODO: UPDATE GRAVE
 int owner(unsigned int nodeGlobal) {
     for (int i = 0; i < startingNodes.size() - 1; ++i) {
         if (startingNodes[i] <= nodeGlobal && nodeGlobal < startingNodes[i + 1])
@@ -155,20 +156,17 @@ int main(int argc, char **argv) {
     vector<unsigned int> shareList;       // List of nodes to share
     for (const auto &vertex : localGraph.neighboursList) {
         unsigned int node = vertex.first;
-        unsigned int globalNode = localGraph.localToGlobal[node];  // Get the global id of the node
-        vector<unsigned int> remoteNeighbours;
-        remoteNeighbours = localGraph.remoteNeighbours(node);
+        vector<unsigned int> remoteNeighbours = localGraph.remoteNeighbours(node);
 
         for (const auto &remoteNode : remoteNeighbours) {
-            unsigned int remoteGlobalNode = localGraph.localToGlobal[remoteNode];  // Get the global id of the remote node
-            if (find(getList.begin(), getList.end(), remoteGlobalNode) == getList.end()) {
-                getList.push_back(remoteGlobalNode);  // Add remote node to the get list if not already present
+            if (find(getList.begin(), getList.end(), remoteNode) == getList.end()) {
+                getList.push_back(remoteNode);  // Add remote node to the get list if not already present
             }
-            if (find(getProcessList.begin(), getProcessList.end(), owner(remoteGlobalNode)) == getProcessList.end()) {
-                getProcessList.push_back(owner(remoteGlobalNode));  // Add the owner process of the remote node to the get process list
+            if (find(getProcessList.begin(), getProcessList.end(), owner(remoteNode)) == getProcessList.end()) {
+                getProcessList.push_back(owner(remoteNode));  // Add the owner process of the remote node to the get process list
             }
-            if (find(shareList.begin(), shareList.end(), globalNode) == shareList.end()) {
-                shareList.push_back(globalNode);  // Add the local node to the share list if not already present
+            if (find(shareList.begin(), shareList.end(), node) == shareList.end()) {
+                shareList.push_back(node);  // Add the local node to the share list if not already present
             }
         }
     }
@@ -184,8 +182,8 @@ int main(int argc, char **argv) {
     unsigned long mapSize = (sizeof(unsigned int) + sizeof(unsigned long)) * shareList.size();
     unsigned long listSize = 0;
     for (const auto &vertex : shareList) {
-        listSize += sizeof(unsigned int) + sizeof(double);                                                               // community, degree
-        listSize += localGraph.nNeighbours(localGraph.globalToLocal[vertex]) * (sizeof(unsigned int) + sizeof(double));  // adjacency list
+        listSize += sizeof(unsigned int) + sizeof(double);                                     // community, degree
+        listSize += localGraph.nNeighbours(vertex) * (sizeof(unsigned int) + sizeof(double));  // adjacency list
     }
 
     unsigned long windowSize = sizeof(unsigned int) +  // The number of shared verteices
@@ -206,10 +204,10 @@ int main(int argc, char **argv) {
         memcpy(windowBuffer + sizeof(unsigned int) + i * (sizeof(unsigned int) + sizeof(unsigned long)) + sizeof(unsigned int),
                &startingByte, sizeof(unsigned long));  // Store the starting byte for the vertex
 
-        unsigned int localId = localGraph.globalToLocal[vertex];  // Get the local id of the vertex
+        unsigned int localId = vertex;  // Get the local id of the vertex
 
         unsigned int numberOfNeighbours = localGraph.nNeighbours(localId);  // Get the number of neighbours for the vertex
-        unsigned int community = localGraph.localToGlobal[c.n2c[localId]];  // Get the community of the vertex
+        unsigned int community = c.n2c[localId];                            // Get the community of the vertex
         double degree = localGraph.weightedDegree(localId);                 // Get the weighted degree of the vertex
 
         memcpy(windowBuffer + lastByte, &community, sizeof(unsigned int));  // Store the community id
@@ -219,8 +217,8 @@ int main(int argc, char **argv) {
 
         // Store the adjacency list for the vertex
         for (const auto &neighbour : localGraph.neighboursList[localId]) {
-            unsigned int neighbourId = localGraph.localToGlobal[neighbour.first];  // Get the global id of the neighbour
-            double weight = neighbour.second;                                      // Get the weight of the edge
+            unsigned int neighbourId = neighbour.first;  // Get the global id of the neighbour
+            double weight = neighbour.second;            // Get the weight of the edge
 
             memcpy(windowBuffer + lastByte, &neighbourId, sizeof(unsigned int));  // Store the neighbour id
             lastByte += sizeof(unsigned int);
@@ -292,9 +290,7 @@ int main(int argc, char **argv) {
                 localGraph.addEdge(vertex, neighbourId, weight);  // Add the edge to the local graph
             }
 
-            unsigned int localId = localGraph.globalToLocal[vertex];            // Get the local id of the vertex
-            unsigned int localCommunity = localGraph.globalToLocal[community];  // Get the local id of the community
-            c.updateRemote(localId, localCommunity, degree);                    // Update the community structure with the remote node
+            c.updateRemote(vertex, community, degree);  // Update the community structure with the remote node
         }
 
         delete[] remoteBuffers[process];  // Deallocate remote buffer
@@ -310,14 +306,10 @@ int main(int argc, char **argv) {
 
     try {
         c.step();  // Perform a step in the community detection algorithm
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         cerr << "localNodes:" << endl;
         for (const auto &node : localGraph.localNodes) {
-            cerr << "  local " << node << " -> global " << localGraph.localToGlobal[node] << endl;
-        }
-        cerr << "globalToLocal:" << endl;
-        for (const auto &pair : localGraph.globalToLocal) {
-            cerr << "  global " << pair.first << " -> local " << pair.second << endl;
+            cerr << "  local " << node << " -> global " << node << endl;
         }
         cerr << "Rank " << rank << ": Error during community detection: " << endl;
         MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
@@ -336,12 +328,12 @@ int main(int argc, char **argv) {
     vector<vector<double>> sendWeights(size);               // List of weighted degrees to send to each process
 
     for (unsigned int i = 0; i < c.remoteCommunities.size(); ++i) {
-        unsigned int node = localGraph.localToGlobal[c.remoteCommunities[i]];              // Get the global id of the node
-        unsigned int community = localGraph.localToGlobal[c.n2c[c.remoteCommunities[i]]];  // Get the global id of the community
-        double wtc = c.remoteWeights[i];                                                   // Get the weight of the node to community connection
-        double selfLoops = localGraph.selfLoops(c.remoteCommunities[i]);                   // Get the self-loops of the node
-        double weightedDegree = localGraph.weightedDegree(c.remoteCommunities[i]);         // Get the weighted degree of the node
-        int ownerProcess = owner(node);                                                    // Get the owner process of the node
+        unsigned int node = c.remoteCommunities[i];                                 // Get the global id of the node
+        unsigned int community = c.n2c[c.remoteCommunities[i]];                     // Get the global id of the community
+        double wtc = c.remoteWeights[i];                                            // Get the weight of the node to community connection
+        double selfLoops = localGraph.selfLoops(c.remoteCommunities[i]);            // Get the self-loops of the node
+        double weightedDegree = localGraph.weightedDegree(c.remoteCommunities[i]);  // Get the weighted degree of the node
+        int ownerProcess = owner(node);                                             // Get the owner process of the node
 
         sendVertexIds[ownerProcess].push_back(node);            // Add the node to the list of vertex ids to send
         sendCommunities[ownerProcess].push_back(community);     // Add the community to the list of communities to send
