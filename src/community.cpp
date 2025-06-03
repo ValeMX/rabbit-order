@@ -65,7 +65,7 @@ void Community::remove(int node, int community, double weightNodeToCommunity) {
 
     tot[community] -= g.weightedDegree(node);
     in[community] -= 2 * weightNodeToCommunity + g.selfLoops(node);
-    n2c[node] = -1;  // Remove the node from its community
+    n2c[node] = UINT_MAX;  // Remove the node from its community
 }
 
 void Community::neighbourCommunities(int node) {
@@ -87,10 +87,10 @@ void Community::neighbourCommunities(int node) {
     for (unsigned int i = 0; i < deg; i++) {
         unsigned int neighbour = n[i];
         unsigned int neighbourCommunity = n2c[neighbour];
-        double neighbourWeight = g.weightedDegree(neighbour);
+        double neighbourWeight = g.isRemote(neighbour) ? g.remoteWeightedDegree(neighbour) : g.weightedDegree(neighbour);
 
         if (neighbour != node) {
-            if (neighbourWeights[neighbourCommunity] == -1) {
+            if (neighbourWeights[neighbourCommunity] <= 0) {
                 neighbourWeights[neighbourCommunity] = 0.;
                 neighbourPositions[neighbourLast++] = neighbourCommunity;
             }
@@ -99,12 +99,19 @@ void Community::neighbourCommunities(int node) {
     }
 }
 
-double Community::modularityGain(int node, int community, double weightNodeToCommunity, double weight) const {
-    if (g.isRemote(node)) {
-        throw out_of_range("Node or community index out of range");
+double Community::modularityGain(int community, double weightNodeToCommunity, double weight) const {
+    double totCommunity = 0;  // Total weight of the community
+    try {
+        totCommunity = tot.at(community);  // Total weight of the community
+    } catch (const std::out_of_range& e) {
+        cerr << "Error in modularityGain: community " << community << " not found." << endl;
+        cerr << "Available communities: ";
+        for (const auto& entry : n2c) {
+            cerr << "(" << entry.first << " -> " << entry.second << ") ";
+        }
+        cerr << endl;
+        throw e;
     }
-
-    double totCommunity = tot.at(community);   // Total weight of the community
     double weightNode = weight;                // Weight of the node
     double totalWeight = g.totalWeight;        // Total weight of the graph
     double weightNtC = weightNodeToCommunity;  // Weight of the node to the community
@@ -132,22 +139,17 @@ bool Community::step() {
     int moves;
     int stepsDone = 0;
 
-    vector<unsigned int> randomOrder(size);
-    for (unsigned int i = 0; i < size; i++)
-        randomOrder[i] = i;
-    for (unsigned int i = 0; i < size - 1; i++) {
-        unsigned int position = rand() % (size - i) + i;
-        unsigned int tmp = randomOrder[i];
-        randomOrder[i] = randomOrder[position];
-        randomOrder[position] = tmp;
-    }
+    vector<unsigned int> randomOrder(g.localNodes.begin(), g.localNodes.end());
+    random_device rd;
+    mt19937 r(rd());
+    shuffle(randomOrder.begin(), randomOrder.end(), r);  // Shuffle the nodes to randomize the order
 
     moves = 0;
     stepsDone++;
 
     // Each node is removed from its community and inserted in the best one
     for (unsigned int nodeId = 0; nodeId < size; nodeId++) {
-        unsigned int node = randomOrder[nodeId];
+        unsigned int node = randomOrder[nodeId];  // Get the node in the random order
         unsigned int community = n2c[node];
         double weight = g.weightedDegree(node);
 
@@ -159,13 +161,18 @@ bool Community::step() {
         int bestCommunity = community;
         double bestLinks = 0.;
         double bestGain = 0.;
-        for (unsigned int i = 0; i < neighbourLast; i++) {
-            double gain = modularityGain(node, neighbourPositions[i], neighbourWeights[neighbourPositions[i]], weight);
-            if (gain > bestGain) {
-                bestCommunity = neighbourPositions[i];
-                bestLinks = neighbourWeights[neighbourPositions[i]];
-                bestGain = gain;
+        try {
+            for (unsigned int i = 0; i < neighbourLast; i++) {
+                double gain = modularityGain(neighbourPositions[i], neighbourWeights[neighbourPositions[i]], weight);
+                if (gain > bestGain) {
+                    bestCommunity = neighbourPositions[i];
+                    bestLinks = neighbourWeights[neighbourPositions[i]];
+                    bestGain = gain;
+                }
             }
+        } catch (const std::out_of_range& e) {
+            cerr << "Error in neighbourCommunities: " << node << endl;
+            throw e;
         }
 
         // Insert the node into the best community found

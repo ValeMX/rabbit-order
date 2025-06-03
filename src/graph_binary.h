@@ -2,6 +2,7 @@
 #define GRAPH_BINARY_H
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <string>
 #include <unordered_map>

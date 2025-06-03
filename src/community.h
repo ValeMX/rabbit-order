@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <map>
+#include <random>
 #include <stdexcept>
 #include <vector>
 
@@ -41,7 +42,7 @@ class Community {
     void neighbourCommunities(int node);                                                                  // Find communities of neighbours of a node
 
     // Compute the modularity gain for moving a node to a community (using simplified modularity formula)
-    double modularityGain(int node, int community, double weightNodeToCommunity, double weight) const;
+    double modularityGain(int community, double weightNodeToCommunity, double weight) const;
     double modularity() const;  // Compute the modularity of the current community structure
 
     bool step();  // Perform a single step of the community detection algorithm

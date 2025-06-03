@@ -35,8 +35,6 @@ struct GraphData {
 char *fileName = NULL;
 vector<unsigned int> startingNodes;
 
-vector<pair<int, int>> remoteMap(10, make_pair(-1, -1));
-
 void display_time(const char *str) {
     time_t rawtime;
     time(&rawtime);
@@ -72,6 +70,8 @@ int main(int argc, char **argv) {
     // ----------------------------------------------------------------
     // Distribute Graph
     // ----------------------------------------------------------------
+    if (rank == 0) cerr << "Distributing graph..." << endl;
+
     GraphBinary localGraph;
 
     if (rank == 0) {
@@ -109,11 +109,11 @@ int main(int argc, char **argv) {
     } else {
         // Receive partitioned data from the root process
         int count;
-        int bytes = count * sizeof(pair<unsigned int, unsigned int>);
         MPI_Status status;
 
         MPI_Recv(&count, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);  // Receive number of edges
 
+        int bytes = count * sizeof(pair<unsigned int, unsigned int>);
         localGraph.nEdges = count;
         localGraph.edgeList.resize(count);
         localGraph.weightList.resize(count);
@@ -122,9 +122,17 @@ int main(int argc, char **argv) {
         MPI_Recv(localGraph.weightList.data(), count, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD, &status);  // Receive weights
     }
 
+    // if (rank == 0) {
+    //     cerr << "localGraph.edgeList:" << endl;
+    //     for (const auto &edge : localGraph.edgeList) {
+    //         cerr << "(" << edge.first << ", " << edge.second << ")" << endl;
+    //     }
+    // }
+
     // ----------------------------------------------------------------
     // Graph Initialization
     // ----------------------------------------------------------------
+    if (rank == 0) cerr << "Initializing local graph..." << endl;
 
     localGraph.init();
     Community c(localGraph, -1, 0.0);  // Initialize community structure with local graph
@@ -132,6 +140,7 @@ int main(int argc, char **argv) {
     // ----------------------------------------------------------------
     // Exchanging starting node
     // ----------------------------------------------------------------
+    if (rank == 0) cerr << "Exchanging starting node..." << endl;
 
     startingNodes.resize(size);
     MPI_Allgather(&localGraph.startingNode, 1, MPI_UNSIGNED, startingNodes.data(), 1, MPI_UNSIGNED, MPI_COMM_WORLD);
@@ -139,6 +148,7 @@ int main(int argc, char **argv) {
     // ----------------------------------------------------------------
     // Collection of remote edges
     // ----------------------------------------------------------------
+    if (rank == 0) cerr << "Collecting remote edges..." << endl;
 
     vector<unsigned int> getList;         // List of remote nodes to retrieve
     vector<unsigned int> getProcessList;  // List of processes to get remote nodes from
@@ -146,7 +156,8 @@ int main(int argc, char **argv) {
     for (const auto &vertex : localGraph.neighboursList) {
         unsigned int node = vertex.first;
         unsigned int globalNode = localGraph.localToGlobal[node];  // Get the global id of the node
-        vector<unsigned int> remoteNeighbours = localGraph.remoteNeighbours(node);
+        vector<unsigned int> remoteNeighbours;
+        remoteNeighbours = localGraph.remoteNeighbours(node);
 
         for (const auto &remoteNode : remoteNeighbours) {
             unsigned int remoteGlobalNode = localGraph.localToGlobal[remoteNode];  // Get the global id of the remote node
@@ -173,8 +184,8 @@ int main(int argc, char **argv) {
     unsigned long mapSize = (sizeof(unsigned int) + sizeof(unsigned long)) * shareList.size();
     unsigned long listSize = 0;
     for (const auto &vertex : shareList) {
-        listSize += sizeof(unsigned int) + sizeof(double);                                     // community, degree
-        listSize += localGraph.nNeighbours(vertex) * (sizeof(unsigned int) + sizeof(double));  // adjacency list
+        listSize += sizeof(unsigned int) + sizeof(double);                                                               // community, degree
+        listSize += localGraph.nNeighbours(localGraph.globalToLocal[vertex]) * (sizeof(unsigned int) + sizeof(double));  // adjacency list
     }
 
     unsigned long windowSize = sizeof(unsigned int) +  // The number of shared verteices
@@ -217,6 +228,8 @@ int main(int argc, char **argv) {
             lastByte += sizeof(double);
         }
     }
+
+    if (rank == 0) cerr << "Windows setup complete. Initiating remote edge collection..." << endl;
 
     // Share the window size with all processes
     vector<unsigned long> windowSizes(size);
@@ -293,13 +306,29 @@ int main(int argc, char **argv) {
     // ----------------------------------------------------------------
     // Community Detection
     // ----------------------------------------------------------------
+    if (rank == 0) cerr << "Starting community detection..." << endl;
 
-    c.step();  // Perform a step in the community detection algorithm
+    try {
+        c.step();  // Perform a step in the community detection algorithm
+    } catch (const std::exception& e) {
+        cerr << "localNodes:" << endl;
+        for (const auto &node : localGraph.localNodes) {
+            cerr << "  local " << node << " -> global " << localGraph.localToGlobal[node] << endl;
+        }
+        cerr << "globalToLocal:" << endl;
+        for (const auto &pair : localGraph.globalToLocal) {
+            cerr << "  global " << pair.first << " -> local " << pair.second << endl;
+        }
+        cerr << "Rank " << rank << ": Error during community detection: " << endl;
+        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+    }
 
     // ----------------------------------------------------------------
     // Exchange updated communities
     // ----------------------------------------------------------------
+    if (rank == 0) cerr << "Exchanging updated communities..." << endl;
 
+    MPI_Barrier(MPI_COMM_WORLD);                            // Synchronize all processes before exchanging communities
     vector<vector<unsigned int>> sendVertexIds(size);       // List of vertex ids to send to each process
     vector<vector<unsigned int>> sendCommunities(size);     // List of communities to send to each process
     vector<vector<double>> sendWeightsToCommunities(size);  // List of weights to communities to send to each process

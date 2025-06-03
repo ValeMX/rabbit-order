@@ -15,11 +15,6 @@ void GraphBinary::renumber() {
     localNodes.clear();
     remoteNodes.clear();
 
-    // Local nodes are those that are sources in the edge list
-    for (const auto& edge : edgeList) {
-        localNodes.insert(edge.first);
-    }
-
     // Compute all nodes to remap
     std::unordered_set<unsigned int> visibleNodes;
     for (const auto& edge : edgeList) {
@@ -31,18 +26,23 @@ void GraphBinary::renumber() {
         startingNode = min(startingNode, src);
     }
 
-    // Remote nodes are those that are not in localNodes
-    for (const auto& node : visibleNodes) {
-        if (localNodes.find(node) == localNodes.end()) {
-            remoteNodes.insert(node);
-        }
-    }
-
     // Create mappings from global to local indices
     unsigned int localId = 0;
     for (const auto& node : visibleNodes) {
         globalToLocal[node] = localId++;
         localToGlobal.push_back(node);
+    }
+
+    // Local nodes are those that are sources in the edge list
+    for (const auto& edge : edgeList) {
+        localNodes.insert(globalToLocal[edge.first]);
+    }
+
+    // Remote nodes are those that are not in localNodes
+    for (const auto& node : visibleNodes) {
+        if (localNodes.find(globalToLocal[node]) == localNodes.end()) {
+            remoteNodes.insert(globalToLocal[node]);
+        }
     }
 }
 
