@@ -22,7 +22,10 @@ void GraphBinary::renumber() {
 
     // Compute all nodes to remap
     std::unordered_set<unsigned int> visibleNodes;
-    for (const auto& [src, dst] : edgeList) {
+    for (const auto& edge : edgeList) {
+        unsigned int src = edge.first;
+        unsigned int dst = edge.second;
+
         visibleNodes.insert(src);
         visibleNodes.insert(dst);
         startingNode = min(startingNode, src);

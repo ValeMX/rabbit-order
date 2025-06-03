@@ -123,6 +123,8 @@ double Community::modularity() const {
 
         q += in.at(node) / totalWeight - (tot.at(node) / totalWeight) * (tot.at(node) / totalWeight);
     }
+
+    return q;
 }
 
 bool Community::step() {
@@ -187,6 +189,8 @@ bool Community::step() {
 
     if (moves > 0)
         improvement = true;
+
+    return improvement;
 }
 
 // GraphBinary Community::graph() {
