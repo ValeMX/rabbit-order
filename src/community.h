@@ -27,14 +27,18 @@ class Community {
     int steps;         // Number of steps for the algorithm
     double threshold;  // Threshold for computing a step
 
+    vector<unsigned int> remoteCommunities;  // Remote communities mapping
+    vector<double> remoteWeights;            // Weights of remote communities
+
     Community(GraphBinary& gb, int st, double thr);
     void updateRemote(unsigned int node, unsigned int community, double degree);  // Update remote communities
 
     void print() const;  // Print the community structure
 
-    void insert(int node, int community, double weightNodeToCommunity);  // Insert a node into a community
-    void remove(int node, int community, double weightNodeToCommunity);  // Remove a node from a community
-    void neighbourCommunities(int node);                                 // Find communities of neighbours of a node
+    void insert(int node, int community, double weightNodeToCommunity);                                   // Insert a node into a community
+    void insert(int node, int community, double weightNodeToCommunity, double weight, double selfLoops);  // Insert a node into a community with weight
+    void remove(int node, int community, double weightNodeToCommunity);                                   // Remove a node from a community
+    void neighbourCommunities(int node);                                                                  // Find communities of neighbours of a node
 
     // Compute the modularity gain for moving a node to a community (using simplified modularity formula)
     double modularityGain(int node, int community, double weightNodeToCommunity, double weight) const;

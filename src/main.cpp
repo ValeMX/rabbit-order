@@ -294,7 +294,7 @@ int main(int argc, char **argv) {
         MPI_Ssend(&g.degrees.front(), g.degrees.size(), MPI_LONG, 0, 1, MPI_COMM_WORLD);  // Send degrees
 
         int nWeights = g.weightList.size();
-        MPI_Ssend(&nWeights, 1, MPI_INT, 0, 1, MPI_COMM_WORLD);                            // Send number of weights
+        MPI_Ssend(&nWeights, 1, MPI_INT, 0, 1, MPI_COMM_WORLD);                                  // Send number of weights
         MPI_Ssend(&g.weightList.front(), g.weightList.size(), MPI_FLOAT, 0, 1, MPI_COMM_WORLD);  // Send weights
 
         int rSize = rSource.size();
