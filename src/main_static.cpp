@@ -33,17 +33,11 @@ struct GraphData {
 };
 
 char *fileName = NULL;
-vector<unsigned int> startingNodes;
 
 void display_time(const char *str) {
     time_t rawtime;
     time(&rawtime);
     cerr << str << ": " << ctime(&rawtime);
-}
-
-// TODO: UPDATE GRAVE
-int owner(unsigned int node, int size) {
-    return node % size;  // Simple round-robin distribution based on node index
 }
 
 int main(int argc, char **argv) {
@@ -69,11 +63,10 @@ int main(int argc, char **argv) {
     // ----------------------------------------------------------------
     if (rank == 0) cerr << "Distributing graph..." << endl;
 
+    Partitioner p(size);
     GraphBinary localGraph;
 
     if (rank == 0) {
-        Partitioner p(size);
-
         display_time("Start");
         cerr << "Number of processes: " << size << endl;
 
@@ -92,15 +85,22 @@ int main(int argc, char **argv) {
 
         // Send partitioned data to all processes: nodes, cumulative degrees, edges, and weights
         for (unsigned int i = 1; i < size; i++) {
-            int count = p.partitionEdges[i].size();
+            int count = p.partitionNodes[i].size();
+            MPI_Send(&count, 1, MPI_INT, i, 0, MPI_COMM_WORLD);                               // Send number of nodes
+            MPI_Send(p.partitionNodes[i].data(), count, MPI_UNSIGNED, i, 1, MPI_COMM_WORLD);  // Send nodes
+
+            count = p.partitionEdges[i].size();
             int bytes = count * sizeof(pair<unsigned int, unsigned int>);
-            MPI_Send(&count, 1, MPI_INT, i, 0, MPI_COMM_WORLD);                                                     // Send number of edges
-            MPI_Send(reinterpret_cast<void *>(p.partitionEdges[i].data()), bytes, MPI_BYTE, i, 1, MPI_COMM_WORLD);  // Send edges
-            MPI_Send(p.partitionWeights[i].data(), count, MPI_DOUBLE, i, 2, MPI_COMM_WORLD);                        // Send weights
+
+            MPI_Send(&count, 1, MPI_INT, i, 2, MPI_COMM_WORLD);                                                     // Send number of edges
+            MPI_Send(reinterpret_cast<void *>(p.partitionEdges[i].data()), bytes, MPI_BYTE, i, 3, MPI_COMM_WORLD);  // Send edges
+            MPI_Send(p.partitionWeights[i].data(), count, MPI_DOUBLE, i, 4, MPI_COMM_WORLD);                        // Send weights
         }
 
         // Initialize local graph with partitioned data
+        localGraph.nNodes = p.partitionNodes[0].size();
         localGraph.nEdges = p.partitionEdges[0].size();
+        localGraph.localNodes = p.partitionNodes[0];
         localGraph.edgeList = p.partitionEdges[0];
         localGraph.weightList = p.partitionWeights[0];
     } else {
@@ -108,15 +108,20 @@ int main(int argc, char **argv) {
         int count;
         MPI_Status status;
 
-        MPI_Recv(&count, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);  // Receive number of edges
+        MPI_Recv(&count, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);  // Receive number of nodes
+        vector<unsigned int> localNodes(count);
+        MPI_Recv(localNodes.data(), count, MPI_UNSIGNED, 0, 1, MPI_COMM_WORLD, &status);  // Receive nodes
+        localGraph.localNodes = localNodes;                                               // Set local nodes
+
+        MPI_Recv(&count, 1, MPI_INT, 0, 2, MPI_COMM_WORLD, &status);  // Receive number of edges
 
         int bytes = count * sizeof(pair<unsigned int, unsigned int>);
         localGraph.nEdges = count;
         localGraph.edgeList.resize(count);
         localGraph.weightList.resize(count);
 
-        MPI_Recv(localGraph.edgeList.data(), bytes, MPI_BYTE, 0, 1, MPI_COMM_WORLD, &status);      // Receive edges
-        MPI_Recv(localGraph.weightList.data(), count, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD, &status);  // Receive weights
+        MPI_Recv(localGraph.edgeList.data(), bytes, MPI_BYTE, 0, 3, MPI_COMM_WORLD, &status);      // Receive edges
+        MPI_Recv(localGraph.weightList.data(), count, MPI_DOUBLE, 0, 4, MPI_COMM_WORLD, &status);  // Receive weights
     }
 
     // if (rank == 0) {
@@ -132,15 +137,9 @@ int main(int argc, char **argv) {
     if (rank == 0) cerr << "Initializing local graph..." << endl;
 
     localGraph.init();
+    cerr << "Local graph initialized with " << localGraph.nNodes << " nodes and " << localGraph.nEdges << " edges." << endl;
+
     Community c(localGraph, -1, 0.0);  // Initialize community structure with local graph
-
-    // ----------------------------------------------------------------
-    // Exchanging starting node
-    // ----------------------------------------------------------------
-    if (rank == 0) cerr << "Exchanging starting node..." << endl;
-
-    startingNodes.resize(size);
-    MPI_Allgather(&localGraph.startingNode, 1, MPI_UNSIGNED, startingNodes.data(), 1, MPI_UNSIGNED, MPI_COMM_WORLD);
 
     // ----------------------------------------------------------------
     // Collection of remote edges
@@ -158,8 +157,8 @@ int main(int argc, char **argv) {
             if (find(getList.begin(), getList.end(), remoteNode) == getList.end()) {
                 getList.push_back(remoteNode);  // Add remote node to the get list if not already present
             }
-            if (find(getProcessList.begin(), getProcessList.end(), owner(remoteNode, size)) == getProcessList.end()) {
-                getProcessList.push_back(owner(remoteNode, size));  // Add the owner process of the remote node to the get process list
+            if (find(getProcessList.begin(), getProcessList.end(), p.owner(remoteNode)) == getProcessList.end()) {
+                getProcessList.push_back(p.owner(remoteNode));  // Add the owner process of the remote node to the get process list
             }
             if (find(shareList.begin(), shareList.end(), node) == shareList.end()) {
                 shareList.push_back(node);  // Add the local node to the share list if not already present
@@ -184,7 +183,7 @@ int main(int argc, char **argv) {
 
     unsigned long windowSize = sizeof(unsigned int) +  // The number of shared verteices
                                mapSize +               // The map with (vertex, startingByte) for each shared vertex
-                               listSize;               // The list with (id, community, degree, adjacency list) for each shared vertex
+                               listSize;               // The list with (community, degree, adjacency list) for each shared vertex
 
     uint8_t *windowBuffer = new uint8_t[windowSize];
 
@@ -293,116 +292,175 @@ int main(int argc, char **argv) {
     }
 
     MPI_Win_free(&window);  // Free the window after use
-    delete[] windowBuffer;  // Deallocate the window buffer
+    delete windowBuffer;    // Deallocate the window buffer
 
     // ----------------------------------------------------------------
     // Community Detection
     // ----------------------------------------------------------------
     if (rank == 0) cerr << "Starting community detection..." << endl;
 
-    try {
-        c.step();  // Perform a step in the community detection algorithm
-    } catch (const std::exception &e) {
-        cerr << "localNodes:" << endl;
-        for (const auto &node : localGraph.localNodes) {
-            cerr << "  local " << node << " -> global " << node << endl;
-        }
-        cerr << "Rank " << rank << ": Error during community detection: " << endl;
-        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-    }
+    // cerr << "Rank: " << rank << " Total weight of the graph: " << localGraph.totalWeight << endl;
+    if (rank == 0) cerr << "Modularity before steps: " << c.modularity() << endl;
+
+    // for (const auto &node : localGraph.localNodes) {
+    //     cerr << "Node: " << node
+    //          << ", Community: " << c.n2c[node]
+    //          << ", Weighted Degree: " << localGraph.weightedDegree(node)
+    //          << ", Self Loops: " << localGraph.selfLoops(node) << endl;
+    // }
+
+    c.step();
+
+    // for (const auto &node : localGraph.localNodes) {
+    //     cerr << "Node: " << node
+    //          << ", Community: " << c.n2c[node]
+    //          << ", Weighted Degree: " << localGraph.weightedDegree(node)
+    //          << ", Self Loops: " << localGraph.selfLoops(node) << endl;
+    // }
+
+    // if (rank == 0) c.print();
+
+    if (rank == 0) cerr << "Modularity: " << c.modularity() << endl;
+
+    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before exchanging communities
 
     // ----------------------------------------------------------------
     // Exchange updated communities
     // ----------------------------------------------------------------
-    if (rank == 0) cerr << "Exchanging updated communities..." << endl;
+    // if (rank == 0) cerr << "Exchanging updated communities..." << endl;
 
-    MPI_Barrier(MPI_COMM_WORLD);                            // Synchronize all processes before exchanging communities
-    vector<vector<unsigned int>> sendVertexIds(size);       // List of vertex ids to send to each process
-    vector<vector<unsigned int>> sendCommunities(size);     // List of communities to send to each process
-    vector<vector<double>> sendWeightsToCommunities(size);  // List of weights to communities to send to each process
-    vector<vector<double>> sendSelfLoops(size);             // List of self-loops to send to each process
-    vector<vector<double>> sendWeights(size);               // List of weighted degrees to send to each process
+    // MPI_Barrier(MPI_COMM_WORLD);                            // Synchronize all processes before exchanging communities
+    // vector<vector<unsigned int>> sendVertexIds(size);       // List of vertex ids to send to each process
+    // vector<vector<unsigned int>> sendCommunities(size);     // List of communities to send to each process
+    // vector<vector<double>> sendWeightsToCommunities(size);  // List of weights to communities to send to each process
+    // vector<vector<double>> sendSelfLoops(size);             // List of self-loops to send to each process
+    // vector<vector<double>> sendWeights(size);               // List of weighted degrees to send to each process
 
-    for (unsigned int i = 0; i < c.remoteCommunities.size(); ++i) {
-        unsigned int node = c.remoteCommunities[i];                                 // Get the global id of the node
-        unsigned int community = c.n2c[c.remoteCommunities[i]];                     // Get the global id of the community
-        double wtc = c.remoteWeights[i];                                            // Get the weight of the node to community connection
-        double selfLoops = localGraph.selfLoops(c.remoteCommunities[i]);            // Get the self-loops of the node
-        double weightedDegree = localGraph.weightedDegree(c.remoteCommunities[i]);  // Get the weighted degree of the node
-        int ownerProcess = owner(node, size);                                       // Get the owner process of the node
+    // for (unsigned int i = 0; i < c.remoteCommunities.size(); ++i) {
+    //     unsigned int node = c.remoteCommunities[i];               // Get the global id of the node
+    //     unsigned int community = c.n2c[node];                     // Get the global id of the community
+    //     double wtc = c.remoteWeights[i];                          // Get the weight of the node to community connection
+    //     double selfLoops = localGraph.selfLoops(node);            // Get the self-loops of the node
+    //     double weightedDegree = localGraph.weightedDegree(node);  // Get the weighted degree of the node
+    //     int ownerProcess = p.owner(community);                // Get the owner process of the community
 
-        sendVertexIds[ownerProcess].push_back(node);            // Add the node to the list of vertex ids to send
-        sendCommunities[ownerProcess].push_back(community);     // Add the community to the list of communities to send
-        sendWeightsToCommunities[ownerProcess].push_back(wtc);  // Add the weight to the list of weights to communities to send
-        sendSelfLoops[ownerProcess].push_back(selfLoops);       // Add the self-loops to the list of self-loops to send
-        sendWeights[ownerProcess].push_back(weightedDegree);    // Add the weighted degree to the list of weights to send
+    //     sendVertexIds[ownerProcess].push_back(node);            // Add the node to the list of vertex ids to send
+    //     sendCommunities[ownerProcess].push_back(community);     // Add the community to the list of communities to send
+    //     sendWeightsToCommunities[ownerProcess].push_back(wtc);  // Add the weight to the list of weights to communities to send
+    //     sendSelfLoops[ownerProcess].push_back(selfLoops);       // Add the self-loops to the list of self-loops to send
+    //     sendWeights[ownerProcess].push_back(weightedDegree);    // Add the weighted degree to the list of weights to send
+    // }
+
+    // if (rank == 0) cerr << "Communities collected. Sending updates to all processes..." << endl;
+
+    // // Send the updated communities to each process
+    // for (unsigned int i = 0; i < size; ++i) {
+    //     if (i == rank) continue;  // Skip if the process is the current one
+
+    //     unsigned int count = sendVertexIds[i].size();
+    //     MPI_Send(&count, 1, MPI_UNSIGNED, i, 0, MPI_COMM_WORLD);  // Send the number of vertices to the process
+
+    //     if (count > 0) {
+    //         MPI_Send(sendVertexIds[i].data(), count, MPI_UNSIGNED, i, 1, MPI_COMM_WORLD);           // Send the vertex ids
+    //         MPI_Send(sendCommunities[i].data(), count, MPI_UNSIGNED, i, 2, MPI_COMM_WORLD);         // Send the communities
+    //         MPI_Send(sendWeightsToCommunities[i].data(), count, MPI_DOUBLE, i, 3, MPI_COMM_WORLD);  // Send weights to communities
+    //         MPI_Send(sendSelfLoops[i].data(), count, MPI_DOUBLE, i, 4, MPI_COMM_WORLD);             // Send self-loops
+    //         MPI_Send(sendWeights[i].data(), count, MPI_DOUBLE, i, 5, MPI_COMM_WORLD);               // Send weighted degrees
+    //     }
+    // }
+
+    // if (rank == 0) cerr << "Updates sent. Receiving communities from all processes..." << endl;
+
+    // vector<vector<unsigned int>> recvVertexIds(size);       // List of vertex ids received from each process
+    // vector<vector<unsigned int>> recvCommunities(size);     // List of communities received from each process
+    // vector<vector<double>> recvWeightsToCommunities(size);  // List of weights to communities received from each process
+    // vector<vector<double>> recvSelfLoops(size);             // List of self-loops received from each process
+    // vector<vector<double>> recvWeights(size);               // List of weighted degrees received from each process
+
+    // vector<MPI_Request> requests;  // Requests for non-blocking communication
+    // unsigned int cr = 0;           // Current request index
+
+    // // Receive the updated communities from each process
+    // for (unsigned int i = 0; i < size; ++i) {
+    //     if (i == rank) continue;  // Skip if the process is the current one
+
+    //     unsigned int count;
+    //     MPI_Status status;
+    //     MPI_Recv(&count, 1, MPI_UNSIGNED, i, 0, MPI_COMM_WORLD, &status);  // Receive the number of vertices
+
+    //     if (count > 0) {
+    //         recvVertexIds[i].resize(count);
+    //         recvCommunities[i].resize(count);
+    //         recvWeightsToCommunities[i].resize(count);
+    //         recvSelfLoops[i].resize(count);
+    //         recvWeights[i].resize(count);
+
+    //         requests.resize(cr + 5);  // Resize requests vector to hold new requests
+
+    //         MPI_Irecv(recvVertexIds[i].data(), count, MPI_UNSIGNED, i, 1, MPI_COMM_WORLD, requests.data() + cr++);           // Receive vertex ids
+    //         MPI_Irecv(recvCommunities[i].data(), count, MPI_UNSIGNED, i, 2, MPI_COMM_WORLD, requests.data() + cr++);         // Receive communities
+    //         MPI_Irecv(recvWeightsToCommunities[i].data(), count, MPI_DOUBLE, i, 3, MPI_COMM_WORLD, requests.data() + cr++);  // Receive weights to communities
+    //         MPI_Irecv(recvSelfLoops[i].data(), count, MPI_DOUBLE, i, 4, MPI_COMM_WORLD, requests.data() + cr++);             // Receive self-loops
+    //         MPI_Irecv(recvWeights[i].data(), count, MPI_DOUBLE, i, 5, MPI_COMM_WORLD, requests.data() + cr++);               // Receive weighted degrees
+    //     }
+    // }
+
+    // if (rank == 0) cerr << "Communities received. Waiting for all receive requests to complete..." << endl;
+
+    // // Wait for all receive requests to complete
+    // MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+
+    // if (rank == 0) cerr << "All receive requests completed. Updating community structure..." << endl;
+
+    // // Update the community structure with the received data
+    // for (unsigned int i = 0; i < size; ++i) {
+    //     if (i == rank) continue;  // Skip if the process is the current one
+
+    //     for (unsigned int j = 0; j < recvVertexIds[i].size(); ++j) {
+    //         unsigned int node = recvVertexIds[i][j];
+    //         unsigned int community = recvCommunities[i][j];
+    //         double wtc = recvWeightsToCommunities[i][j];
+    //         double selfLoops = recvSelfLoops[i][j];
+    //         double weightedDegree = recvWeights[i][j];
+
+    //         c.insert(node, community, wtc, weightedDegree, selfLoops);  // Insert the node into the community structure
+    //     }
+    // }
+
+    // ----------------------------------------------------------------
+    // Gather final community structure
+    // ----------------------------------------------------------------
+
+    cerr << "Gathering final community structure..." << endl;
+
+    vector<unsigned int> communitiesToSend;
+    for (const auto &node : localGraph.localNodes) {
+        communitiesToSend.push_back(node);
+        communitiesToSend.push_back(c.n2c[node]);  // Add the node and its community to the list
     }
 
-    // Send the updated communities to each process
-    for (unsigned int i = 0; i < size; ++i) {
-        if (i == rank) continue;  // Skip if the process is the current one
+    // Gather sizes of communities to send
+    int sizeOfCommunitiesToSend = communitiesToSend.size();
+    vector<int> allSizes(size);
+    MPI_Gather(&sizeOfCommunitiesToSend, 1, MPI_UNSIGNED, allSizes.data(), 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
 
-        unsigned int count = sendVertexIds[i].size();
-        MPI_Send(&count, 1, MPI_UNSIGNED, i, 0, MPI_COMM_WORLD);  // Send the number of vertices to the process
-
-        if (count > 0) {
-            MPI_Send(sendVertexIds[i].data(), count, MPI_UNSIGNED, i, 1, MPI_COMM_WORLD);           // Send the vertex ids
-            MPI_Send(sendCommunities[i].data(), count, MPI_UNSIGNED, i, 2, MPI_COMM_WORLD);         // Send the communities
-            MPI_Send(sendWeightsToCommunities[i].data(), count, MPI_DOUBLE, i, 3, MPI_COMM_WORLD);  // Send weights to communities
-            MPI_Send(sendSelfLoops[i].data(), count, MPI_DOUBLE, i, 4, MPI_COMM_WORLD);             // Send self-loops
-            MPI_Send(sendWeights[i].data(), count, MPI_DOUBLE, i, 5, MPI_COMM_WORLD);               // Send weighted degrees
+    vector<int> displacements(size, 0);
+    int totalSize = 0;
+    if (rank == 0) {
+        for (int i = 0; i < size; ++i) {
+            displacements[i] = totalSize;  // Calculate displacements for each process
+            totalSize += allSizes[i];      // Update total size with the size of the current process
         }
     }
 
-    vector<vector<unsigned int>> recvVertexIds(size);       // List of vertex ids received from each process
-    vector<vector<unsigned int>> recvCommunities(size);     // List of communities received from each process
-    vector<vector<double>> recvWeightsToCommunities(size);  // List of weights to communities received from each process
-    vector<vector<double>> recvSelfLoops(size);             // List of self-loops received from each process
-    vector<vector<double>> recvWeights(size);               // List of weighted degrees received from each process
-
-    vector<MPI_Request> requests(size);  // Requests for non-blocking communication
-    unsigned int cr = 0;                 // Current request index
-
-    // Receive the updated communities from each process
-    for (unsigned int i = 0; i < size; ++i) {
-        if (i == rank) continue;  // Skip if the process is the current one
-
-        unsigned int count;
-        MPI_Status status;
-        MPI_Recv(&count, 1, MPI_UNSIGNED, i, 0, MPI_COMM_WORLD, &status);  // Receive the number of vertices
-
-        if (count > 0) {
-            recvVertexIds[i].resize(count);
-            recvCommunities[i].resize(count);
-            recvWeightsToCommunities[i].resize(count);
-            recvSelfLoops[i].resize(count);
-            recvWeights[i].resize(count);
-
-            requests.resize(cr + 5);  // Resize requests vector to hold new requests
-
-            MPI_Irecv(recvVertexIds[i].data(), count, MPI_UNSIGNED, i, 1, MPI_COMM_WORLD, &requests[cr++]);           // Receive vertex ids
-            MPI_Irecv(recvCommunities[i].data(), count, MPI_UNSIGNED, i, 2, MPI_COMM_WORLD, &requests[cr++]);         // Receive communities
-            MPI_Irecv(recvWeightsToCommunities[i].data(), count, MPI_DOUBLE, i, 3, MPI_COMM_WORLD, &requests[cr++]);  // Receive weights to communities
-            MPI_Irecv(recvSelfLoops[i].data(), count, MPI_DOUBLE, i, 4, MPI_COMM_WORLD, &requests[cr++]);             // Receive self-loops
-            MPI_Irecv(recvWeights[i].data(), count, MPI_DOUBLE, i, 5, MPI_COMM_WORLD, &requests[cr++]);               // Receive weighted degrees
-        }
+    vector<unsigned int> allCommunities;
+    if (rank == 0) {
+        allCommunities.resize(totalSize);  // Resize the vector to hold all communities
     }
 
-    // Wait for all receive requests to complete
-    MPI_Waitall(cr, requests.data(), MPI_STATUSES_IGNORE);
+    // Gather communities from all processes
+    MPI_Gatherv(communitiesToSend.data(), sizeOfCommunitiesToSend, MPI_UNSIGNED,
+                allCommunities.data(), allSizes.data(), displacements.data(), MPI_UNSIGNED, 0, MPI_COMM_WORLD);
 
-    // Update the community structure with the received data
-    for (unsigned int i = 0; i < size; ++i) {
-        if (i == rank) continue;  // Skip if the process is the current one
-
-        for (unsigned int j = 0; j < recvVertexIds[i].size(); ++j) {
-            unsigned int node = recvVertexIds[i][j];
-            unsigned int community = recvCommunities[i][j];
-            double wtc = recvWeightsToCommunities[i][j];
-            double selfLoops = recvSelfLoops[i][j];
-            double weightedDegree = recvWeights[i][j];
-
-            c.insert(node, community, wtc, weightedDegree, selfLoops);  // Insert the node into the community structure
-        }
-    }
+    if (rank == 0) cerr << "Community structure gathered from all processes." << endl;
 }

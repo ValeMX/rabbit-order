@@ -1,5 +1,7 @@
 #include "partitioner.h"
 
+#include <climits>
+
 Partitioner::Partitioner(unsigned int numPartitions) {
     numberOfPartitions = numPartitions;
     partitionMap.resize(0);
@@ -24,7 +26,8 @@ void Partitioner::staticPartition(const char* inFile) {
     weights.resize(0);
 
     // Read edges and weights from the input file
-    unsigned int src, dst, weight;
+    unsigned int src, dst;
+    double weight;
     string line;
     while (getline(infile, line)) {
         istringstream iss(line);
@@ -39,15 +42,28 @@ void Partitioner::staticPartition(const char* inFile) {
         }
     }
 
-    partitionMap.resize(vid + 1, -1);
+    partitionMap.resize(vid + 1, UINT_MAX);
+
+    cerr << "Detected nodes: " << partitionMap.size() << endl;
 
     // Assign partitions to vertices
     for (unsigned int i = 0; i < partitionMap.size(); i++) {
         partitionMap[i] = i % numberOfPartitions;
     }
 
+    partitionNodes.resize(numberOfPartitions);
     partitionEdges.resize(numberOfPartitions);
     partitionWeights.resize(numberOfPartitions);
+
+    // Initialize partition nodes
+    for (unsigned int i = 0; i < partitionMap.size(); i++) {
+        unsigned int partitionId = partitionMap[i];
+        if (partitionId < numberOfPartitions) {
+            partitionNodes[partitionId].push_back(i);
+        } else {
+            cerr << "Partition ID out of range: " << partitionId << endl;
+        }
+    }
 
     auto weightIt = weights.begin();
     for (auto edgeIt = edgeList.begin(); edgeIt != edgeList.end(); ++edgeIt, ++weightIt) {
@@ -64,4 +80,8 @@ void Partitioner::staticPartition(const char* inFile) {
     }
 
     cerr << "Partitioning done" << endl;
+}
+
+unsigned int Partitioner::owner(unsigned int node) {
+    return node % numberOfPartitions;  // Simple round-robin distribution based on node index
 }

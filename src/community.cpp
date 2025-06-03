@@ -3,14 +3,10 @@
 Community::Community(GraphBinary& gb, int st, double thr) : g(gb) {
     size = gb.nNodes;
 
-    neighbourWeights.resize(size, -1);
-    neighbourPositions.resize(size);
-    neighbourLast = 0;
-
     for (const auto& node : g.localNodes) {
         n2c[node] = node;                    // Initialize each node to its own community
         tot[node] = g.weightedDegree(node);  // Total weight of the community is the weighted degree of the node
-        in[node] = 2 * g.selfLoops(node);    // Internal weight is twice the self-loops of the node
+        in[node] = g.selfLoops(node);        // Internal weight is twice the self-loops of the node
     }
 
     steps = st;
@@ -21,16 +17,17 @@ void Community::updateRemote(unsigned int node, unsigned int community, double d
     // Update the remote community structure
     n2c[node] = community;  // Assign the node to the specified community
     tot[community] += degree;
-    in[community] += 2 * g.remoteSelfLoops(node);
+    in[community] += g.remoteSelfLoops(node);
 }
-
-void Community::print() const {
+#include <set>
+void Community::print() {
     cout << "Community structure: (node community)" << endl;
-    for (const auto& pair : n2c) {
-        cout << pair.first << " " << pair.second << endl;
+    set<unsigned int> communities;  // Set to store unique communities
+    for (const auto& node : g.localNodes) {
+        cout << node << " " << n2c[node] << endl;  // Print each node and its community
+        communities.insert(n2c[node]);             // Insert the community into the set
     }
-    cout << "Total communities: " << tot.size() << endl;
-    cout << "Modularity: " << modularity() << endl;
+    cout << "Total communities: " << communities.size() << endl;  // Print the total number of unique communities
 }
 
 void Community::insert(int node, int community, double weightNodeToCommunity) {
@@ -64,45 +61,20 @@ void Community::neighbourCommunities(int node) {
         throw out_of_range("Node index out of range");
     }
 
-    for (unsigned int i = 0; i < neighbourLast; i++)
-        neighbourWeights[neighbourPositions[i]] = -1;
-    neighbourLast = 0;
+    neighbourCommunitiesMap.clear();  // Clear the neighbour weights map
 
-    vector<unsigned int> n = g.neighbours(node);
-    unsigned int deg = g.nNeighbours(node);
+    for (const auto& n : g.neighboursList[node]) {
+        if (n.first == node) continue;
 
-    neighbourPositions[0] = n2c[node];            // Ids of the neighbour community
-    neighbourWeights[neighbourPositions[0]] = 0;  // Weights of the neighbour community
-    neighbourLast = 1;                            // Number of neighbour communities
-
-    for (unsigned int i = 0; i < deg; i++) {
-        unsigned int neighbour = n[i];
-        unsigned int neighbourCommunity = n2c[neighbour];
-        double neighbourWeight = g.isRemote(neighbour) ? g.remoteWeightedDegree(neighbour) : g.weightedDegree(neighbour);
-
-        if (neighbour != node) {
-            if (neighbourWeights[neighbourCommunity] <= 0) {
-                neighbourWeights[neighbourCommunity] = 0.;
-                neighbourPositions[neighbourLast++] = neighbourCommunity;
-            }
-            neighbourWeights[neighbourCommunity] += neighbourWeight;
-        }
+        unsigned int comm = n2c[n.first];           // Get the community of the neighbour
+        neighbourCommunitiesMap[comm] += n.second;  // Add the weight of the edge to the community weight
     }
 }
 
-double Community::modularityGain(int community, double weightNodeToCommunity, double weight) const {
+double Community::modularityGain(int community, double weightNodeToCommunity, double weight) {
     double totCommunity = 0;  // Total weight of the community
-    try {
-        totCommunity = tot.at(community);  // Total weight of the community
-    } catch (const std::out_of_range& e) {
-        cerr << "Error in modularityGain: community " << community << " not found." << endl;
-        cerr << "Available communities: ";
-        for (const auto& entry : n2c) {
-            cerr << "(" << entry.first << " -> " << entry.second << ") ";
-        }
-        cerr << endl;
-        throw e;
-    }
+
+    totCommunity = tot[community];             // Total weight of the community
     double weightNode = weight;                // Weight of the node
     double totalWeight = g.totalWeight;        // Total weight of the graph
     double weightNtC = weightNodeToCommunity;  // Weight of the node to the community
@@ -110,16 +82,26 @@ double Community::modularityGain(int community, double weightNodeToCommunity, do
     return (weightNtC - totCommunity * weightNode / totalWeight);
 }
 
-double Community::modularity() const {
+double Community::modularity() {
     double q = .0;
     double totalWeight = g.totalWeight;
 
-    for (const auto& node : g.localNodes) {
-        if (tot.at(node) <= 0) {
-            continue;  // Skip empty communities
-        }
+    std::set<unsigned int> processed;
+    for (const auto& pair : n2c) {
+        unsigned int node = pair.first;
+        unsigned int community = pair.second;
 
-        q += in.at(node) / totalWeight - (tot.at(node) / totalWeight) * (tot.at(node) / totalWeight);
+        if (processed.count(community)) continue;
+        processed.insert(community);
+
+        double totC = tot[community];
+        double inC = in[community];
+
+        // cerr << "Community " << community
+        //      << ": tot = " << totC
+        //      << ", in = " << inC << endl;
+
+        q += inC / totalWeight - (totC / totalWeight) * (totC / totalWeight);
     }
 
     return q;
@@ -139,39 +121,36 @@ bool Community::step() {
     stepsDone++;
 
     // Each node is removed from its community and inserted in the best one
-    for (unsigned int nodeId = 0; nodeId < size; nodeId++) {
+    for (unsigned int nodeId = 0; nodeId < randomOrder.size(); nodeId++) {
         unsigned int node = randomOrder[nodeId];  // Get the node in the random order
         unsigned int community = n2c[node];
         double weight = g.weightedDegree(node);
 
-        neighbourCommunities(node);                            // Compute neighbour communities and their weights
-        remove(node, community, neighbourWeights[community]);  // Remove node from its community
+        neighbourCommunities(node);                                   // Compute neighbour communities and their weights
+        remove(node, community, neighbourCommunitiesMap[community]);  // Remove node from its community
 
         // Compute the best community to insert the node
         // The default choice is the former community
-        int bestCommunity = community;
+        unsigned int bestCommunity = community;
         double bestLinks = 0.;
         double bestGain = 0.;
-        try {
-            for (unsigned int i = 0; i < neighbourLast; i++) {
-                double gain = modularityGain(neighbourPositions[i], neighbourWeights[neighbourPositions[i]], weight);
-                if (gain > bestGain) {
-                    bestCommunity = neighbourPositions[i];
-                    bestLinks = neighbourWeights[neighbourPositions[i]];
-                    bestGain = gain;
-                }
+
+        // TODO: self loop se è da solo?
+        for (const auto& n : neighbourCommunitiesMap) {
+            double gain = modularityGain(n.first, n.second, weight);  // Compute the modularity gain for moving the node
+            // cerr << "Node " << node << " to community " << n.first << " gain: " << gain << endl;
+            if (gain > bestGain) {
+                bestGain = gain;          // Update the best gain found
+                bestCommunity = n.first;  // Update the best community
+                bestLinks = n.second;     // Update the best links to the community
             }
-        } catch (const std::out_of_range& e) {
-            cerr << "Error in neighbourCommunities: " << node << endl;
-            throw e;
         }
 
-        // Insert the node into the best community found
-        insert(node, bestCommunity, bestLinks);
+        insert(node, bestCommunity, bestLinks);  // Insert the node into the best community found
 
         if (g.isRemote(bestCommunity)) {
-            remoteCommunities.push_back(bestCommunity);  // Update remote communities mapping
-            remoteWeights.push_back(bestLinks);          // Update remote weights
+            remoteCommunities.push_back(node);   // Update remote communities mapping
+            remoteWeights.push_back(bestLinks);  // Update remote weights
         }
 
         if (bestCommunity != community)
@@ -190,150 +169,3 @@ bool Community::step() {
 
     return improvement;
 }
-
-// GraphBinary Community::graph() {
-//     // Select non-empty communities
-//     vector<int> renumber(size, -1);
-//     for (int node = 0; node < size; node++) {
-//         renumber[n2c[node]]++;
-//     }
-
-//     // Renumber communities
-//     int final = 0;
-//     for (int i = 0; i < size; i++)
-//         if (renumber[i] != -1)
-//             renumber[i] = final++;
-
-//     // Compute communities
-//     vector<vector<int>> communityNodes(final);
-//     n2cNew.clear();
-//     n2cNew.resize(size);
-//     for (int node = 0; node < size; node++) {
-//         communityNodes[renumber[n2c[node]]].push_back(node);
-//         n2cNew[node] = renumber[n2c[node]];
-//     }
-
-//     // Compute weighted graph
-//     GraphBinary g2;
-//     g2.nNodes = communityNodes.size();
-//     g2.degrees.resize(communityNodes.size());
-
-//     // For each community, compute the total weight of the community
-//     int communityDegree = communityNodes.size();
-//     for (int community = 0; community < communityDegree; community++) {
-//         map<int, double> m;
-//         map<int, double>::iterator it;
-
-//         // For each node in the community, find its neighbours and their weights
-//         int communitySize = communityNodes[community].size();
-//         for (int node = 0; node < communitySize; node++) {
-//             pair<vector<unsigned int>::iterator, vector<double>::iterator> p = g.neighbours(communityNodes[community][node]);
-//             int deg = g.nNeighbours(communityNodes[community][node]);
-//             for (int i = 0; i < deg; i++) {
-//                 int neighbour = *(p.first + i);
-//                 int neighbourCommunity = renumber[n2c[neighbour]];
-//                 double neighbourWeight = (g.weights.size() == 0) ? 1. : *(p.second + i);
-
-//                 // If the node is the first, initialize the map
-//                 // Otherwise, update the weight of the neighbour community
-//                 it = m.find(neighbourCommunity);
-//                 if (it == m.end())
-//                     m.insert(make_pair(neighbourCommunity, neighbourWeight));
-//                 else
-//                     it->second += neighbourWeight;
-//             }
-//         }
-
-//         g2.degrees[community] = (community == 0) ? m.size() : g2.degrees[community - 1] + m.size();
-//         g2.nEdges += m.size();
-
-//         // Add the community to the graph
-//         for (it = m.begin(); it != m.end(); it++) {
-//             g2.totalWeight += it->second;
-//             g2.edges.push_back(it->first);
-//             g2.weights.push_back(it->second);
-//         }
-//     }
-
-//     return g2;
-// }
-
-// GraphBinary Community::graphNew() {
-//     // Select non-empty communities
-//     vector<int> renumber(size, -1);
-//     for (int node = 0; node < size; node++) {
-//         renumber[n2c[node]]++;
-//     }
-
-//     // Renumber communities
-//     int final = 0;
-//     for (int i = 0; i < size; i++)
-//         if (renumber[i] != -1)
-//             renumber[i] = final++;
-
-//     // Compute communities
-//     vector<vector<int>> communityNodes(final);
-//     n2cNew.clear();
-//     n2cNew.resize(size);
-//     for (int node = 0; node < size; node++) {
-//         communityNodes[renumber[n2c[node]]].push_back(node);
-//         n2cNew[node] = renumber[n2c[node]];
-//     }
-
-//     // Compute weighted graph
-//     GraphBinary g2;
-//     g2.nNodes = communityNodes.size();
-//     g2.degrees.resize(communityNodes.size());
-
-//     // For each community, compute the total weight of the community
-//     int communityDegree = communityNodes.size();
-//     for (int community = 0; community < communityDegree; community++) {
-//         map<int, float> m;
-//         map<int, float>::iterator it;
-
-//         // For each node in the community, find its neighbours and their weights
-//         int comm_size = communityNodes[community].size();
-//         for (int node = 0; node < comm_size; node++) {
-//             pair<vector<unsigned int>::iterator, vector<double>::iterator> p = gE.neighbours(communityNodes[community][node]);
-//             int deg = gE.nNeighbours(communityNodes[community][node]);
-//             for (int i = 0; i < deg; i++) {
-//                 int neigh = *(p.first + i);
-//                 int neigh_comm = renumber[n2c[neigh]];
-//                 double neigh_weight = (gE.weights->size == 0) ? 1. : *(p.second + i);
-
-//                 // If the node is the first, initialize the map
-//                 // Otherwise, update the weight of the neighbour community
-//                 it = m.find(neigh_comm);
-//                 if (it == m.end())
-//                     m.insert(make_pair(neigh_comm, neigh_weight));
-//                 else
-//                     it->second += neigh_weight;
-//             }
-
-//             p = gE.remoteNeighbours(communityNodes[community][node]);
-//             deg = gE.nRemoteNeighbours(communityNodes[community][node]);
-
-//             for (int i = 0; i < deg; i++) {
-//                 int neigh = *(p.first + i);
-//                 int neigh_comm = renumber[n2c[neigh]];
-//                 double neigh_weight = (gE.weights->size == 0) ? 1. : *(p.second + i);
-
-//                 it = m.find(neigh_comm);
-//                 if (it == m.end())
-//                     m.insert(make_pair(neigh_comm, neigh_weight));
-//                 else
-//                     it->second += neigh_weight;
-//             }
-//         }
-//         g2.degrees[community] = (community == 0) ? m.size() : g2.degrees[community - 1] + m.size();
-//         g2.nEdges += m.size();
-
-//         for (it = m.begin(); it != m.end(); it++) {
-//             g2.totalWeight += it->second;
-//             g2.edges.push_back(it->first);
-//             g2.weights.push_back(it->second);
-//         }
-//     }
-
-//     return g2;
-// }

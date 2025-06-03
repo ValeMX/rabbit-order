@@ -7,7 +7,6 @@ using namespace std;
 GraphBinary::GraphBinary() : nNodes(0), nEdges(0), totalWeight(0.0) {}
 
 void GraphBinary::init() {
-    localNodes.clear();
     remoteNodes.clear();
 
     std::unordered_set<unsigned int> visibleNodes;
@@ -20,15 +19,10 @@ void GraphBinary::init() {
         startingNode = min(startingNode, src);
     }
 
-    // Local nodes are those that are sources in the edge list
-    for (const auto& edge : edgeList) {
-        localNodes.insert(edge.first);
-    }
-
     // Remote nodes are those that are not in localNodes
     for (const auto& node : visibleNodes) {
-        if (localNodes.find(node) == localNodes.end()) {
-            remoteNodes.insert(node);
+        if (isRemote(node)) {
+            remoteNodes.push_back(node);
         }
     }
 
@@ -47,11 +41,12 @@ void GraphBinary::init() {
         double weight = weightList.empty() ? 1.0 : weightList[i];
 
         neighboursList[src].emplace_back(dst, weight);
+        totalWeight += weight;
     }
 }
 
 bool GraphBinary::isRemote(unsigned int node) {
-    return localNodes.find(node) == localNodes.end();
+    return find(localNodes.begin(), localNodes.end(), node) == localNodes.end();
 }
 
 vector<unsigned int> GraphBinary::neighbours(unsigned int node) {
@@ -151,4 +146,6 @@ void GraphBinary::addEdge(unsigned int source, unsigned int destination, double 
     } else {
         neighboursList[source].emplace_back(destination, weight);
     }
+
+    totalWeight += weight;  // Update total weight
 }

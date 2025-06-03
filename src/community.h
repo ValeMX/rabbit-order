@@ -21,9 +21,7 @@ class Community {
     map<unsigned int, double> tot;           // Total weight of each community
     map<unsigned int, double> in;            // Internal weight of each community
 
-    vector<double> neighbourWeights;          // Weights of neighbours
-    vector<unsigned int> neighbourPositions;  // Positions of neighbours
-    unsigned int neighbourLast;               // Last neighbour position
+    unordered_map<unsigned int, double> neighbourCommunitiesMap;  // Weights to remote communities
 
     int steps;         // Number of steps for the algorithm
     double threshold;  // Threshold for computing a step
@@ -34,7 +32,7 @@ class Community {
     Community(GraphBinary& gb, int st, double thr);
     void updateRemote(unsigned int node, unsigned int community, double degree);  // Update remote communities
 
-    void print() const;  // Print the community structure
+    void print();  // Print the community structure
 
     void insert(int node, int community, double weightNodeToCommunity);                                   // Insert a node into a community
     void insert(int node, int community, double weightNodeToCommunity, double weight, double selfLoops);  // Insert a node into a community with weight
@@ -42,8 +40,8 @@ class Community {
     void neighbourCommunities(int node);                                                                  // Find communities of neighbours of a node
 
     // Compute the modularity gain for moving a node to a community (using simplified modularity formula)
-    double modularityGain(int community, double weightNodeToCommunity, double weight) const;
-    double modularity() const;  // Compute the modularity of the current community structure
+    double modularityGain(int community, double weightNodeToCommunity, double weight);
+    double modularity();  // Compute the modularity of the current community structure
 
     bool step();  // Perform a single step of the community detection algorithm
 

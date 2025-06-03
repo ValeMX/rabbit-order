@@ -15,12 +15,14 @@ class Partitioner {
     unsigned int numberOfPartitions;
     vector<unsigned int> partitionMap;
 
+    vector<vector<unsigned int>> partitionNodes;                      // Maps vertex ID to partition ID
     vector<vector<pair<unsigned int, unsigned int>>> partitionEdges;  // Edges in each partition
     vector<vector<double>> partitionWeights;                          // Weights of edges in each partition
-    
+
     Partitioner(unsigned int numPartitions);
 
     void staticPartition(const char* inFile);
+    unsigned int owner(unsigned int node);
 };
 
 #endif  // PARTITIONER_H

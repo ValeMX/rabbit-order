@@ -2,6 +2,7 @@
 #define GRAPH_BINARY_H
 
 #include <algorithm>
+#include <climits>
 #include <limits>
 #include <map>
 #include <string>
@@ -23,8 +24,8 @@ class GraphBinary {
     map<unsigned int, vector<pair<unsigned int, double>>> neighboursList;        // Adjacency list representation
     map<unsigned int, vector<pair<unsigned int, double>>> remoteNeighboursList;  // Remote adjacency list representation
 
-    unordered_set<unsigned int> localNodes;   // Local nodes in the graph
-    unordered_set<unsigned int> remoteNodes;  // Remote nodes in the graph
+    vector<unsigned int> localNodes;   // Local nodes in the graph
+    vector<unsigned int> remoteNodes;  // Remote nodes in the graph
 
     GraphBinary();
     GraphBinary(char* inFile, char* weightsInFile);
