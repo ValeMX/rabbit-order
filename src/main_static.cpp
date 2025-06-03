@@ -42,12 +42,8 @@ void display_time(const char *str) {
 }
 
 // TODO: UPDATE GRAVE
-int owner(unsigned int nodeGlobal) {
-    for (int i = 0; i < startingNodes.size() - 1; ++i) {
-        if (startingNodes[i] <= nodeGlobal && nodeGlobal < startingNodes[i + 1])
-            return i;
-    }
-    return startingNodes.size() - 1;  // Ultimo processo
+int owner(unsigned int node, int size) {
+    return node % size;  // Simple round-robin distribution based on node index
 }
 
 int main(int argc, char **argv) {
@@ -162,8 +158,8 @@ int main(int argc, char **argv) {
             if (find(getList.begin(), getList.end(), remoteNode) == getList.end()) {
                 getList.push_back(remoteNode);  // Add remote node to the get list if not already present
             }
-            if (find(getProcessList.begin(), getProcessList.end(), owner(remoteNode)) == getProcessList.end()) {
-                getProcessList.push_back(owner(remoteNode));  // Add the owner process of the remote node to the get process list
+            if (find(getProcessList.begin(), getProcessList.end(), owner(remoteNode, size)) == getProcessList.end()) {
+                getProcessList.push_back(owner(remoteNode, size));  // Add the owner process of the remote node to the get process list
             }
             if (find(shareList.begin(), shareList.end(), node) == shareList.end()) {
                 shareList.push_back(node);  // Add the local node to the share list if not already present
@@ -333,7 +329,7 @@ int main(int argc, char **argv) {
         double wtc = c.remoteWeights[i];                                            // Get the weight of the node to community connection
         double selfLoops = localGraph.selfLoops(c.remoteCommunities[i]);            // Get the self-loops of the node
         double weightedDegree = localGraph.weightedDegree(c.remoteCommunities[i]);  // Get the weighted degree of the node
-        int ownerProcess = owner(node);                                             // Get the owner process of the node
+        int ownerProcess = owner(node, size);                                       // Get the owner process of the node
 
         sendVertexIds[ownerProcess].push_back(node);            // Add the node to the list of vertex ids to send
         sendCommunities[ownerProcess].push_back(community);     // Add the community to the list of communities to send
