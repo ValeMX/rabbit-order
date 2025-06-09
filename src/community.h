@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "graph_binary.h"
-#include "graph_extended.h"
 using namespace std;
 
 class Community {

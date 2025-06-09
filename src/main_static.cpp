@@ -12,7 +12,6 @@
 
 #include "community.h"
 #include "graph_binary.h"
-#include "graph_extended.h"
 #include "partitioner.h"
 
 using namespace std;
@@ -184,6 +183,8 @@ int main(int argc, char **argv) {
     unsigned long windowSize = sizeof(unsigned int) +  // The number of shared verteices
                                mapSize +               // The map with (vertex, startingByte) for each shared vertex
                                listSize;               // The list with (community, degree, adjacency list) for each shared vertex
+
+// size ||  id1: starting, id: starting.... || n1, n2, n3
 
     uint8_t *windowBuffer = new uint8_t[windowSize];
 
@@ -463,4 +464,7 @@ int main(int argc, char **argv) {
                 allCommunities.data(), allSizes.data(), displacements.data(), MPI_UNSIGNED, 0, MPI_COMM_WORLD);
 
     if (rank == 0) cerr << "Community structure gathered from all processes." << endl;
+
+    MPI_Finalize();
+    return 0;
 }
