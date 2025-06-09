@@ -16,13 +16,12 @@ class GraphBinary {
     unsigned int startingNode;  // Starting node for the graph
     unsigned int nNodes;        // Number of nodes
     unsigned long nEdges;       // Number of edges
-    double totalWeight;         // Total weight of the graph
+    unsigned long totalWeight;  // Total weight of the graph
 
     vector<pair<unsigned int, unsigned int>> edgeList;  // List of edges in the graph
-    vector<double> weightList;                          // Weights of the edges
 
-    map<unsigned int, vector<pair<unsigned int, double>>> neighboursList;        // Adjacency list representation
-    map<unsigned int, vector<pair<unsigned int, double>>> remoteNeighboursList;  // Remote adjacency list representation
+    map<unsigned int, vector<unsigned int>> neighboursList;        // Adjacency list representation
+    map<unsigned int, vector<unsigned int>> remoteNeighboursList;  // Remote adjacency list representation
 
     vector<unsigned int> localNodes;   // Local nodes in the graph
     vector<unsigned int> remoteNodes;  // Remote nodes in the graph
@@ -38,12 +37,10 @@ class GraphBinary {
     vector<unsigned int> neighbours(unsigned int node);        // Get neighbours of a node
     vector<unsigned int> remoteNeighbours(unsigned int node);  // Get remote neighbours of a node
 
-    unsigned int nNeighbours(unsigned int node);  // Get the number of neighbors of a node
-
-    double weightedDegree(unsigned int node);        // Compute the weighted degree of a node
-    double selfLoops(unsigned int node);             // Compute the self-loops of a node
-    double remoteWeightedDegree(unsigned int node);  // Compute the weighted degree of a remote node
-    double remoteSelfLoops(unsigned int node);       // Compute the self-loops of a remote node
+    unsigned int degree(unsigned int node);           // Compute the degree of a node
+    unsigned int selfLoops(unsigned int node);        // Compute the self-loops of a node
+    unsigned int remoteDegree(unsigned int node);     // Compute the weighted degree of a remote node
+    unsigned int remoteSelfLoops(unsigned int node);  // Compute the self-loops of a remote node
 
     void addEdge(unsigned int source, unsigned int destination, double weight);  // Add an edge to the graph
 };

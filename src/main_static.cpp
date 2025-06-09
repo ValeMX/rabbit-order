@@ -54,9 +54,6 @@ int main(int argc, char **argv) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    // TODO: Set number of threads for OpenMP
-    // omp_set_num_threads(num_threads);
-
     // ----------------------------------------------------------------
     // Distribute Graph
     // ----------------------------------------------------------------
@@ -93,7 +90,6 @@ int main(int argc, char **argv) {
 
             MPI_Send(&count, 1, MPI_INT, i, 2, MPI_COMM_WORLD);                                                     // Send number of edges
             MPI_Send(reinterpret_cast<void *>(p.partitionEdges[i].data()), bytes, MPI_BYTE, i, 3, MPI_COMM_WORLD);  // Send edges
-            MPI_Send(p.partitionWeights[i].data(), count, MPI_DOUBLE, i, 4, MPI_COMM_WORLD);                        // Send weights
         }
 
         // Initialize local graph with partitioned data
@@ -101,7 +97,6 @@ int main(int argc, char **argv) {
         localGraph.nEdges = p.partitionEdges[0].size();
         localGraph.localNodes = p.partitionNodes[0];
         localGraph.edgeList = p.partitionEdges[0];
-        localGraph.weightList = p.partitionWeights[0];
     } else {
         // Receive partitioned data from the root process
         int count;
@@ -117,10 +112,8 @@ int main(int argc, char **argv) {
         int bytes = count * sizeof(pair<unsigned int, unsigned int>);
         localGraph.nEdges = count;
         localGraph.edgeList.resize(count);
-        localGraph.weightList.resize(count);
 
-        MPI_Recv(localGraph.edgeList.data(), bytes, MPI_BYTE, 0, 3, MPI_COMM_WORLD, &status);      // Receive edges
-        MPI_Recv(localGraph.weightList.data(), count, MPI_DOUBLE, 0, 4, MPI_COMM_WORLD, &status);  // Receive weights
+        MPI_Recv(localGraph.edgeList.data(), bytes, MPI_BYTE, 0, 3, MPI_COMM_WORLD, &status);  // Receive edges
     }
 
     // if (rank == 0) {
@@ -177,14 +170,14 @@ int main(int argc, char **argv) {
     unsigned long listSize = 0;
     for (const auto &vertex : shareList) {
         listSize += sizeof(unsigned int) + sizeof(double);                                     // community, degree
-        listSize += localGraph.nNeighbours(vertex) * (sizeof(unsigned int) + sizeof(double));  // adjacency list
+        listSize += localGraph.degree(vertex) * (sizeof(unsigned int) + sizeof(double));  // adjacency list
     }
 
     unsigned long windowSize = sizeof(unsigned int) +  // The number of shared verteices
                                mapSize +               // The map with (vertex, startingByte) for each shared vertex
                                listSize;               // The list with (community, degree, adjacency list) for each shared vertex
 
-// size ||  id1: starting, id: starting.... || n1, n2, n3
+    // size ||  id1: starting, id: starting.... || n1, n2, n3
 
     uint8_t *windowBuffer = new uint8_t[windowSize];
 
@@ -202,7 +195,7 @@ int main(int argc, char **argv) {
 
         unsigned int localId = vertex;  // Get the local id of the vertex
 
-        unsigned int numberOfNeighbours = localGraph.nNeighbours(localId);  // Get the number of neighbours for the vertex
+        unsigned int numberOfNeighbours = localGraph.degree(localId);  // Get the number of neighbours for the vertex
         unsigned int community = c.n2c[localId];                            // Get the community of the vertex
         double degree = localGraph.weightedDegree(localId);                 // Get the weighted degree of the vertex
 

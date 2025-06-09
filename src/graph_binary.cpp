@@ -4,7 +4,7 @@
 #include <iostream>
 using namespace std;
 
-GraphBinary::GraphBinary() : nNodes(0), nEdges(0), totalWeight(0.0) {}
+GraphBinary::GraphBinary() : nNodes(0), nEdges(0), totalWeight(0) {}
 
 void GraphBinary::init() {
     remoteNodes.clear();
@@ -30,18 +30,13 @@ void GraphBinary::init() {
     nEdges = edgeList.size();
     totalWeight = 0.0;
 
-    if (nEdges == 0) {
-        return;  // No edges to process
-    }
-
     // Populate neighbours list
     for (unsigned int i = 0; i < nEdges; i++) {
         unsigned int src = edgeList[i].first;
         unsigned int dst = edgeList[i].second;
-        double weight = weightList.empty() ? 1.0 : weightList[i];
 
-        neighboursList[src].emplace_back(dst, weight);
-        totalWeight += weight;
+        neighboursList[src].push_back(dst);
+        totalWeight++;
     }
 }
 
@@ -51,33 +46,30 @@ bool GraphBinary::isRemote(unsigned int node) {
 
 vector<unsigned int> GraphBinary::neighbours(unsigned int node) {
     if (isRemote(node)) {
-        throw out_of_range("Node index out of range");
+        throw out_of_range("Neighbours: Node index out of range");
     }
 
-    vector<unsigned int> neighbourList;
-    for (const auto& neighbour : neighboursList[node]) {
-        neighbourList.push_back(neighbour.first);
-    }
-    return neighbourList;
+    return neighboursList[node];  // Return the neighbours of the node
 }
 
 vector<unsigned int> GraphBinary::remoteNeighbours(unsigned int node) {
     if (isRemote(node)) {
-        throw out_of_range("Node index out of range");
+        throw out_of_range("Remote neighbours: Node index out of range");
     }
 
+    // TODO: use count
     vector<unsigned int> remoteNeighbours;
     for (const auto& neighbour : neighboursList[node]) {
-        if (isRemote(neighbour.first)) {
-            remoteNeighbours.push_back(neighbour.first);
+        if (isRemote(neighbour)) {
+            remoteNeighbours.push_back(neighbour);
         }
     }
     return remoteNeighbours;
 }
 
-unsigned int GraphBinary::nNeighbours(unsigned int node) {
+unsigned int GraphBinary::degree(unsigned int node) {
     if (isRemote(node)) {
-        throw out_of_range("Node index out of range");
+        throw out_of_range("Degree: Node index out of range");
     }
 
     if (neighboursList.find(node) == neighboursList.end()) {
@@ -87,65 +79,55 @@ unsigned int GraphBinary::nNeighbours(unsigned int node) {
     return neighboursList[node].size();
 }
 
-double GraphBinary::weightedDegree(unsigned int node) {
+unsigned int GraphBinary::selfLoops(unsigned int node) {
     if (isRemote(node)) {
-        throw out_of_range("Node index out of range");
+        throw out_of_range("Self loops: Node index out of range");
     }
 
-    double degree = 0.0;
+    // TODO: use count
+    unsigned int sl = 0;
     for (const auto& neighbour : neighboursList[node]) {
-        degree += neighbour.second;  // Sum the weights of the neighbours
-    }
-    return degree;
-}
-
-double GraphBinary::selfLoops(unsigned int node) {
-    if (isRemote(node)) {
-        throw out_of_range("Node index out of range");
-    }
-
-    double selfLoopWeight = 0.0;
-    for (const auto& neighbour : neighboursList[node]) {
-        if (neighbour.first == node) {  // Check for self-loop
-            selfLoopWeight += neighbour.second;
+        if (neighbour == node) {  // Check for self-loop
+            sl++;                 // Increment self-loop weight
         }
     }
-    return selfLoopWeight;
+    return sl;
 }
 
-double GraphBinary::remoteWeightedDegree(unsigned int node) {
+unsigned int GraphBinary::remoteDegree(unsigned int node) {
+    if (!isRemote(node)) {
+        throw out_of_range("Remote degree: Node index out of range");
+    }
+
+    if (remoteNeighboursList.find(node) == remoteNeighboursList.end()) {
+        return 0;  // No neighbours found
+    }
+
+    return remoteNeighboursList[node].size();
+}
+
+unsigned int GraphBinary::remoteSelfLoops(unsigned int node) {
     if (!isRemote(node)) {
         throw out_of_range("Node index out of range");
     }
 
-    double degree = 0.0;
+    // TODO: use count
+    unsigned int sl = 0;
     for (const auto& neighbour : remoteNeighboursList[node]) {
-        degree += neighbour.second;  // Sum the weights of the neighbours
-    }
-    return degree;
-}
-
-double GraphBinary::remoteSelfLoops(unsigned int node) {
-    if (!isRemote(node)) {
-        throw out_of_range("Node index out of range");
-    }
-
-    double selfLoopWeight = 0.0;
-    for (const auto& neighbour : remoteNeighboursList[node]) {
-        if (neighbour.first == node) {  // Check for self-loop
-            selfLoopWeight += neighbour.second;
+        if (neighbour == node) {  // Check for self-loop
+            sl++;                 // Increment self-loop weight
         }
     }
-    return selfLoopWeight;
+    return sl;
 }
 
 void GraphBinary::addEdge(unsigned int source, unsigned int destination, double weight) {
     // Add the edge to the remoteNeighboursList if it's a remote edge
     if (isRemote(source)) {
-        remoteNeighboursList[source].emplace_back(destination, weight);
+        remoteNeighboursList[source].push_back(destination);
     } else {
-        neighboursList[source].emplace_back(destination, weight);
+        neighboursList[source].push_back(destination);
     }
 
-    totalWeight += weight;  // Update total weight
+    totalWeight++;  // Update total weight
 }

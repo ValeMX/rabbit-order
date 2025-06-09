@@ -4,9 +4,9 @@ Community::Community(GraphBinary& gb, int st, double thr) : g(gb) {
     size = gb.nNodes;
 
     for (const auto& node : g.localNodes) {
-        n2c[node] = node;                    // Initialize each node to its own community
-        tot[node] = g.weightedDegree(node);  // Total weight of the community is the weighted degree of the node
-        in[node] = g.selfLoops(node);        // Internal weight is twice the self-loops of the node
+        n2c[node] = node;              // Initialize each node to its own community
+        tot[node] = g.degree(node);    // Total weight of the community is the weighted degree of the node
+        in[node] = g.selfLoops(node);  // Internal weight of the community is the self-loops of the node
     }
 
     steps = st;
@@ -19,7 +19,7 @@ void Community::updateRemote(unsigned int node, unsigned int community, double d
     tot[community] += degree;
     in[community] += g.remoteSelfLoops(node);
 }
-#include <set>
+
 void Community::print() {
     cout << "Community structure: (node community)" << endl;
     set<unsigned int> communities;  // Set to store unique communities
@@ -35,7 +35,7 @@ void Community::insert(int node, int community, double weightNodeToCommunity) {
         throw out_of_range("Node index out of range");
     }
 
-    tot[community] += g.weightedDegree(node);
+    tot[community] += g.degree(node);
     in[community] += 2 * weightNodeToCommunity + g.selfLoops(node);
     n2c[node] = community;  // Assign the node to the specified community
 }
