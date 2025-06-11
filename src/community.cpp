@@ -1,7 +1,12 @@
 #include "community.h"
 
-Community::Community(GraphBinary& gb, int st, double thr) : g(gb) {
-    size = gb.nNodes;
+Community::Community(Graph& gb, int st, double thr) : g(gb) {
+    size = gb.neighboursList.size();  // Set the size of the community structure based on the graph
+
+    n2c.resize(size, -1);     // Initialize node to community mapping with -1
+    n2cNew.resize(size, -1);  // Initialize new node to community mapping with -1
+    tot.resize(size, 0.0);    // Initialize total weight of each community to 0
+    in.resize(size, 0.0);     // Initialize internal weight of each community to 0
 
     for (const auto& node : g.localNodes) {
         n2c[node] = node;              // Initialize each node to its own community
@@ -13,7 +18,25 @@ Community::Community(GraphBinary& gb, int st, double thr) : g(gb) {
     threshold = thr;
 }
 
-void Community::updateRemote(unsigned int node, unsigned int community, double degree) {
+void Community::resize() {
+    size = g.neighboursList.size();  // Update the size of the community structure based on the graph
+
+    n2c.resize(size, -1);     // Resize node to community mapping
+    n2cNew.resize(size, -1);  // Resize new node to community mapping
+    tot.resize(size, 0.0);    // Resize total weight of each community
+    in.resize(size, 0.0);     // Resize internal weight of each community
+}
+
+void Community::updateRemote(int node, int community, int degree) {
+    if (node >= g.neighboursList.size()) {
+        throw out_of_range("Node index out of range");
+    }
+
+    if (community >= tot.size()) {
+        cerr << "Community index out of range: " << community << endl;
+        throw out_of_range("Community index out of range");
+    }
+
     // Update the remote community structure
     n2c[node] = community;  // Assign the node to the specified community
     tot[community] += degree;
@@ -51,9 +74,9 @@ void Community::remove(int node, int community, double weightNodeToCommunity) {
         throw out_of_range("Node index out of range");
     }
 
-    tot[community] -= g.weightedDegree(node);
+    tot[community] -= g.degree(node);
     in[community] -= 2 * weightNodeToCommunity + g.selfLoops(node);
-    n2c[node] = UINT_MAX;  // Remove the node from its community
+    n2c[node] = -1;  // Remove the node from its community
 }
 
 void Community::neighbourCommunities(int node) {
@@ -63,12 +86,33 @@ void Community::neighbourCommunities(int node) {
 
     neighbourCommunitiesMap.clear();  // Clear the neighbour weights map
 
+    // Iterate through the neighbours of the node
     for (const auto& n : g.neighboursList[node]) {
-        if (n.first == node) continue;
+        if (n == node) continue;  // Skip self-loops
 
-        unsigned int comm = n2c[n.first];           // Get the community of the neighbour
-        neighbourCommunitiesMap[comm] += n.second;  // Add the weight of the edge to the community weight
+        unsigned int comm = n2c[n];       // Get the community of the neighbour
+        neighbourCommunitiesMap[comm]++;  // Increment the weight of the edge to the community
     }
+}
+
+int Community::degreeN2C(int node) {
+    if (g.isRemote(node)) {
+        throw out_of_range("Node index out of range");
+    }
+
+    if (n2c[node] < 0) {
+        cerr << "Node " << node << " is not assigned to any community." << endl;
+        return 0;  // Node is not assigned to any community
+    }
+
+    int degree = 0;             // Initialize the degree to 0
+    int community = n2c[node];  // Get the community of the node
+    for (const auto& n : g.neighboursList[node]) {
+        if (n != node && n2c[n] == community) {  // Check if the neighbour is not the node itself and belongs to the same community
+            degree++;                            // Increment the degree if it is
+        }
+    }
+    return degree;
 }
 
 double Community::modularityGain(int community, double weightNodeToCommunity, double weight) {
@@ -84,18 +128,15 @@ double Community::modularityGain(int community, double weightNodeToCommunity, do
 
 double Community::modularity() {
     double q = .0;
-    double totalWeight = g.totalWeight;
+    double totalWeight = (double)g.totalWeight;
 
     std::set<unsigned int> processed;
-    for (const auto& pair : n2c) {
-        unsigned int node = pair.first;
-        unsigned int community = pair.second;
+    for (const auto& c : n2c) {
+        if (processed.count(c) || c < 0) continue;
+        processed.insert(c);
 
-        if (processed.count(community)) continue;
-        processed.insert(community);
-
-        double totC = tot[community];
-        double inC = in[community];
+        double totC = tot[c];
+        double inC = in[c];
 
         // cerr << "Community " << community
         //      << ": tot = " << totC
@@ -124,7 +165,7 @@ bool Community::step() {
     for (unsigned int nodeId = 0; nodeId < randomOrder.size(); nodeId++) {
         unsigned int node = randomOrder[nodeId];  // Get the node in the random order
         unsigned int community = n2c[node];
-        double weight = g.weightedDegree(node);
+        unsigned int degree = g.degree(node);
 
         neighbourCommunities(node);                                   // Compute neighbour communities and their weights
         remove(node, community, neighbourCommunitiesMap[community]);  // Remove node from its community
@@ -136,13 +177,13 @@ bool Community::step() {
         double bestGain = 0.;
 
         // TODO: self loop se è da solo?
-        for (const auto& n : neighbourCommunitiesMap) {
-            double gain = modularityGain(n.first, n.second, weight);  // Compute the modularity gain for moving the node
+        for (const auto& c : neighbourCommunitiesMap) {
+            double gain = modularityGain(c.first, c.second, degree);  // Compute the modularity gain for moving the node
             // cerr << "Node " << node << " to community " << n.first << " gain: " << gain << endl;
             if (gain > bestGain) {
                 bestGain = gain;          // Update the best gain found
-                bestCommunity = n.first;  // Update the best community
-                bestLinks = n.second;     // Update the best links to the community
+                bestCommunity = c.first;  // Update the best community
+                bestLinks = c.second;     // Update the best links to the community
             }
         }
 
