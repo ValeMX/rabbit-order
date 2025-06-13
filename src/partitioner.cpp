@@ -82,6 +82,20 @@ void Partitioner::staticPartition(const char* inFile) {
     cerr << "Partitioning done" << endl;
 }
 
+void Partitioner::updatePartition(vector<int> communities) {
+    vector<unsigned int> newPartitionMap(communities.size(), UINT_MAX);
+    vector<unsigned int> processes(numberOfPartitions);  // Count communities per process
+    for (unsigned int i = 0; i < communities.size(); i++) {
+        newPartitionMap[i] = partitionMap[communities[i]];
+        processes[newPartitionMap[i]]++;  // Count the number of communities per partition
+    }
+    partitionMap = move(newPartitionMap);
+
+    // for (unsigned int i = 0; i < numberOfPartitions; i++) {
+    //     cerr << "Partition " << i << " has " << processes[i] << " communities." << endl;
+    // }
+}
+
 unsigned int Partitioner::owner(unsigned int node) {
-    return node % numberOfPartitions;  // Simple round-robin distribution based on node index
+    return partitionMap[node];
 }

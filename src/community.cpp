@@ -1,12 +1,12 @@
 #include "community.h"
 
 Community::Community(Graph& gb, int st, double thr) : g(gb) {
-    size = gb.neighboursList.size();  // Set the size of the community structure based on the graph
+    // TODO: All'inizio ogni nodo è parte della sua community, quindi non serve condividerlo
+    size = g.neighboursList.size();  // Set the size of the community structure based on the graph
 
-    n2c.resize(size, -1);     // Initialize node to community mapping with -1
-    n2cNew.resize(size, -1);  // Initialize new node to community mapping with -1
-    tot.resize(size, 0.0);    // Initialize total weight of each community to 0
-    in.resize(size, 0.0);     // Initialize internal weight of each community to 0
+    n2c.resize(size, -1);   // Initialize node to community mapping with -1
+    tot.resize(size, 0.0);  // Initialize total weight of each community to 0
+    in.resize(size, 0.0);   // Initialize internal weight of each community to 0
 
     for (const auto& node : g.localNodes) {
         n2c[node] = node;              // Initialize each node to its own community
@@ -21,10 +21,9 @@ Community::Community(Graph& gb, int st, double thr) : g(gb) {
 void Community::resize() {
     size = g.neighboursList.size();  // Update the size of the community structure based on the graph
 
-    n2c.resize(size, -1);     // Resize node to community mapping
-    n2cNew.resize(size, -1);  // Resize new node to community mapping
-    tot.resize(size, 0.0);    // Resize total weight of each community
-    in.resize(size, 0.0);     // Resize internal weight of each community
+    if (size > n2c.size()) n2c.resize(size, -1);   // Resize node to community mapping
+    if (size > tot.size()) tot.resize(size, 0.0);  // Resize total weight of each community
+    if (size > in.size()) in.resize(size, 0.0);    // Resize internal weight of each community
 }
 
 void Community::updateRemote(int node, int community, int degree) {
@@ -40,7 +39,7 @@ void Community::updateRemote(int node, int community, int degree) {
     // Update the remote community structure
     n2c[node] = community;  // Assign the node to the specified community
     tot[community] += degree;
-    in[community] += g.remoteSelfLoops(node);
+    in[community] += g.selfLoops(node);
 }
 
 void Community::print() {

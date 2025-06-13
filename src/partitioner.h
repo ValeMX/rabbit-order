@@ -3,6 +3,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <vector>
 using namespace std;
@@ -22,6 +23,7 @@ class Partitioner {
     Partitioner(unsigned int numPartitions);
 
     void staticPartition(const char* inFile);
+    void updatePartition(vector<int> communities);
     unsigned int owner(unsigned int node);
 };
 
