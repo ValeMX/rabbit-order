@@ -71,8 +71,6 @@ void Partitioner::staticPartition(const char* inFile) {
         partitionEdges[partitionMap[src]].push_back(*edgeIt);
         partitionWeights[partitionMap[src]].push_back(*weightIt);
     }
-
-    cerr << "Partitioning done" << endl;
 }
 
 void Partitioner::updatePartition(vector<int> communities) {

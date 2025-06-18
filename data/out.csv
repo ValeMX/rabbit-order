@@ -251,3 +251,5 @@ size,totalTime,partitionTime,detectionTime,foundCommunities,fileName
 64,0.907588,0.0872138,0.820375,1230,Wiki-Vote.txt
 64,0.966366,0.084656,0.88171,1238,Wiki-Vote.txt
 64,0.856767,0.0905972,0.76617,1236,Wiki-Vote.txt
+1,865.925,0.614907,865.31,135,Slashdot0902.txt
+1,888.724,0.61481,888.109,129,Slashdot0902.txt
