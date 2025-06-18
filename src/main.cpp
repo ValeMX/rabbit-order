@@ -1,4 +1,3 @@
-
 #include <mpi.h>
 #include <omp.h>
 
@@ -326,6 +325,7 @@ int main(int argc, char **argv) {
         step++;  // Increment the step counter for each remote node processed
     }
 
+    MPI_Barrier(MPI_COMM_WORLD);   // Synchronize all processes before finalizing
     double endTime = MPI_Wtime();  // Get the end time of the computation
 
     if (rank == 0) {
@@ -345,10 +345,15 @@ int main(int argc, char **argv) {
         }
 
         if (!fileExists)
-            outFile << "size,startTime,partitionTime,endTime,foundCommunities,fileName" << endl;  // Write header if file does not exist
+            outFile << "size,totalTime,partitionTime,detectionTime,foundCommunities,fileName" << endl;  // Write header if file does not exist
 
-        outFile << size << "," << startTime << "," << partitionTime << "," << endTime << "," << foundCommunities << "," << fileName << endl;  // Write the results to the output file
-        outFile.close();                                                                                                                      // Close the output file
+        outFile << size << ","
+                << endTime - startTime << ","
+                << partitionTime - startTime << ","
+                << endTime - partitionTime << ","
+                << foundCommunities << ","
+                << fileName << endl;  // Write the results to the output file
+        outFile.close();              // Close the output file
     }
 
     MPI_Finalize();
@@ -451,8 +456,9 @@ void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int ra
         c.updateRemote(node, community, degree);               // Update the community structure with the remote node
     }
 
-    MPI_Win_free(&windowNodes);    // Free the window after use
-    MPI_Win_free(&windowOffsets);  // Free the offsets window
+    MPI_Win_free(&windowNodes);                  // Free the window after use
+    MPI_Win_free(&windowOffsets);                // Free the offsets window
+    if (weighted) MPI_Win_free(&windowWeights);  // Free the weights window if weighted
 }
 
 void resolveDuality(vector<int> &n2c) {
