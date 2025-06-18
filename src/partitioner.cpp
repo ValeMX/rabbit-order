@@ -44,8 +44,6 @@ void Partitioner::staticPartition(const char* inFile) {
 
     partitionMap.resize(vid + 1, UINT_MAX);
 
-    cerr << "Detected nodes: " << partitionMap.size() << endl;
-
     // Assign partitions to vertices
     for (unsigned int i = 0; i < partitionMap.size(); i++) {
         partitionMap[i] = i % numberOfPartitions;
@@ -69,11 +67,6 @@ void Partitioner::staticPartition(const char* inFile) {
     for (auto edgeIt = edgeList.begin(); edgeIt != edgeList.end(); ++edgeIt, ++weightIt) {
         unsigned int src = edgeIt->first;
         unsigned int dst = edgeIt->second;
-
-        if ((src >= partitionMap.size()) || (dst >= partitionMap.size())) {
-            cerr << " ERROR : " << dst << " : " << src << " " << endl;
-            continue;
-        }
 
         partitionEdges[partitionMap[src]].push_back(*edgeIt);
         partitionWeights[partitionMap[src]].push_back(*weightIt);

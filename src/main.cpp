@@ -5,9 +5,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <sstream>
 #include <vector>
 
 #include "community.h"
@@ -17,20 +17,6 @@
 using namespace std;
 
 char *fileName = NULL;
-
-void display_time(const char *str) {
-    time_t rawtime;
-    time(&rawtime);
-    cerr << str << ": " << ctime(&rawtime);
-}
-
-template <typename T>
-void flattener(const vector<vector<T>> &vec, vector<T> &flat) {
-    flat.resize(0);  // Clear the flat vector before inserting elements
-    for (const auto &v : vec) {
-        flat.insert(flat.end(), v.begin(), v.end());
-    }
-}
 
 void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int rank, vector<unsigned int> &getList, vector<unsigned int> &getProcessList);
 void resolveDuality(vector<int> &n2c);
@@ -42,9 +28,6 @@ int main(int argc, char **argv) {
     else
         fileName = argv[1];
 
-    time_t timeBegin, timeEnd;
-    time(&timeBegin);
-
     int rank, size;
 
     MPI_Init(&argc, &argv);
@@ -54,20 +37,18 @@ int main(int argc, char **argv) {
     // ----------------------------------------------------------------
     // Distribute Graph
     // ----------------------------------------------------------------
-    if (rank == 0) cerr << "Distributing graph..." << endl;
+    double startTime = MPI_Wtime();
 
     Partitioner p(size);
     Graph localGraph;
     Graph coarseGraph;
 
-    double threshold = 0.01;  // Threshold for modularity improvement
     double modularity = 0.0;
     double newModularity = 0.0;
+    unsigned int foundCommunities = UINT_MAX;  // Counter for found communities
+    vector<unsigned int> communities;          // Vector to store communities
 
     if (rank == 0) {
-        display_time("Start");
-        cerr << "Number of processes: " << size << endl;
-
         if (fileName == NULL) {
             cerr << "No input file specified." << endl;
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
@@ -134,15 +115,15 @@ int main(int argc, char **argv) {
         localGraph.totalWeight = weight;                               // Set total weight based on the number of edges
     }
 
+    double partitionTime = MPI_Wtime();  // Measure partitioning time
+
     localGraph.init();
 
-    for (int step = 0; step < 10; step++) {
+    int step = 0;
+    while (true) {
         // ----------------------------------------------------------------
         // Graph Initialization
         // ----------------------------------------------------------------
-        MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before proceeding
-        if (rank == 0) cerr << "\nSTEP: " << step << endl;
-
         Community c(localGraph, -1, 0.0);  // Initialize community structure with local graph
 
         // ----------------------------------------------------------------
@@ -257,6 +238,12 @@ int main(int argc, char **argv) {
             communitiesSet.insert(c.n2c[i]);  // Insert the community into the set
         }
 
+        if (c2n.size() < foundCommunities) {
+            foundCommunities = c2n.size();  // Update the count of found communities if it has decreased
+        } else {
+            break;
+        }
+
         // ----------------------------------------------------------------
         // Collecting missing nodes for coarsening
         // ----------------------------------------------------------------
@@ -280,17 +267,11 @@ int main(int argc, char **argv) {
         collectMissingNodes(localGraph, c, p, rank, getList, getProcessList);  // Collect missing nodes from remote processes
         newModularity = computeModularity(communitiesSet, c, p, rank);         // Compute the modularity of the current community structure
 
-        if (rank == 0) {
-            cerr << "Modularity before step " << step << ": " << modularity << endl;
-            cerr << "Modularity after step " << step << ": " << newModularity << endl;
-            cerr << "Modularity gain: " << newModularity - modularity << endl;
-        }
-
-        // if (newModularity - modularity < threshold) {
-        //     if (rank == 0) {
-        //         cerr << "Modularity improvement below threshold (" << modularity << " -> " << newModularity << ") in step " << step << ". Stopping community detection." << endl;
-        //     }
-        //     break;  // Exit the loop if the modularity improvement is below the threshold
+        // if (rank == 0) {
+        //     cerr << "Modularity before step " << step << ": " << modularity << endl;
+        //     cerr << "Modularity after step " << step << ": " << newModularity << endl;
+        //     cerr << "Modularity gain: " << newModularity - modularity << endl;
+        //     cerr << "Communities found: " << c2n.size() << endl;
         // }
 
         modularity = newModularity;  // Update the modularity for the next iteration
@@ -341,17 +322,35 @@ int main(int argc, char **argv) {
         //     }
         //     cerr << endl;  // New line after each community
         // }
+
+        step++;  // Increment the step counter for each remote node processed
     }
 
-    time(&timeEnd);
+    double endTime = MPI_Wtime();  // Get the end time of the computation
+
     if (rank == 0) {
-        cerr << endl;
-        display_time("End");
-        cerr << "Total time: " << difftime(timeEnd, timeBegin) << " seconds" << endl;
+        cerr << "Finished in " << step << " steps." << endl;
+        cerr << "Total time: " << endTime - startTime << " seconds." << endl;
+        cerr << "Partitioning time: " << partitionTime - startTime << " seconds." << endl;
+        cerr << "Community detection time: " << endTime - partitionTime << " seconds." << endl;
+        cerr << "Total communities found: " << foundCommunities << endl;
+
+        string outputFile = "out.csv";
+        bool fileExists = filesystem::exists(outputFile);  // Check if the output file already exists
+
+        ofstream outFile("out.csv", ios::app);
+        if (!outFile.is_open()) {
+            cerr << "Error opening output file." << endl;
+            return 1;
+        }
+
+        if (!fileExists)
+            outFile << "size,startTime,partitionTime,endTime,foundCommunities,fileName" << endl;  // Write header if file does not exist
+
+        outFile << size << "," << startTime << "," << partitionTime << "," << endTime << "," << foundCommunities << "," << fileName << endl;  // Write the results to the output file
+        outFile.close();                                                                                                                      // Close the output file
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before proceeding
-    if (rank == 0) cerr << "Local communities updated. Community detection completed." << endl;
     MPI_Finalize();
     return 0;
 }

@@ -47,29 +47,10 @@ void Graph::coarse(Graph& g, Partitioner& p, int rank, vector<int>& n2c, map<int
     totalWeight = g.totalWeight;  // Update the total weight of the graph
     if (g.weights.empty()) {
         for (const auto& community : localNodes) {
-            if (community >= size) {
-                throw out_of_range("Community index out of range in new2old");
-            }
-
             vector<int> neighbourCommunities(size, 0);  // Initialize neighbour communities vector
             for (const auto& node : c2n[new2old[community]]) {
-                if (!g.isCollected(node)) {
-                    std::cerr << "Rank: " << rank << " Invalid node index: " << node << " (max " << g.neighboursList.size() - 1 << ")" << std::endl;
-                }
-
-                if (node >= g.neighboursList.size()) {
-                    std::cerr << "Rank: " << rank << " Invalido node index: " << node << " (max " << g.neighboursList.size() - 1 << ")" << std::endl;
-                }
-
                 for (const auto& neighbour : g.neighboursList[node]) {
-                    if (neighbour >= n2c.size()) {
-                        std::cerr << "Rank: " << rank << " Invalid neighbour index: " << neighbour << " (max " << n2c.size() - 1 << ")" << std::endl;
-                    }
-                    int neighbourCommunity = n2c[neighbour];  // Get the community of the neighbour
-                    auto it = old2new.find(neighbourCommunity);
-                    if (it == old2new.end()) {
-                        std::cerr << "Rank: " << rank << "neighbourCommunity " << neighbourCommunity << " non trovato in old2new\n";
-                    }
+                    int neighbourCommunity = n2c[neighbour];              // Get the community of the neighbour
                     neighbourCommunities[old2new[neighbourCommunity]]++;  // Increment the count for the neighbour community
                 }
             }
