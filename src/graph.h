@@ -33,8 +33,8 @@ class Graph {
 
     Graph();
 
-    void init();                                                                                             // Initialize the graph
-    void coarse(Graph& g, Partitioner& p, int rank, vector<int>& n2c, map<int, vector<unsigned int>>& c2n);  // Coarsen the graph
+    void init();                                                                                                                                           // Initialize the graph
+    void coarse(Graph& g, Partitioner& p, int rank, vector<int>& n2c, map<int, vector<unsigned int>>& c2n, vector<int>& new2old, map<int, int>& old2new);  // Coarsen the graph based on communities
 
     bool isRemote(unsigned int node);                          // Check if a node is remote
     bool isCollected(unsigned int node);                       // Check if a node is collected

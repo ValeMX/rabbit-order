@@ -32,14 +32,13 @@ void Community::updateRemote(int node, int community, int degree) {
     }
 
     if (community >= tot.size()) {
-        cerr << "Community index out of range: " << community << endl;
         throw out_of_range("Community index out of range");
     }
 
     // Update the remote community structure
     n2c[node] = community;  // Assign the node to the specified community
     tot[community] += degree;
-    in[community] += g.selfLoops(node);
+    in[community] += g.selfLoops(node) + 2 * degreeN2C(node);  // Update the internal weight of the community
 }
 
 void Community::print() {
@@ -95,12 +94,11 @@ void Community::neighbourCommunities(int node) {
 }
 
 int Community::degreeN2C(int node) {
-    if (g.isRemote(node)) {
+    if (!g.isCollected(node)) {
         throw out_of_range("Node index out of range");
     }
 
     if (n2c[node] < 0) {
-        cerr << "Node " << node << " is not assigned to any community." << endl;
         return 0;  // Node is not assigned to any community
     }
 
@@ -130,19 +128,34 @@ double Community::modularity() {
     double totalWeight = (double)g.totalWeight;
 
     std::set<unsigned int> processed;
-    for (const auto& c : n2c) {
-        if (processed.count(c) || c < 0) continue;
-        processed.insert(c);
+    for (const auto& node : g.localNodes) {
+        unsigned int community = n2c[node];  // Get the community of the node
+        if (processed.count(community) > 0 || community < 0) continue;
 
-        double totC = tot[c];
-        double inC = in[c];
+        processed.insert(community);  // Mark the community as processed
 
-        // cerr << "Community " << community
-        //      << ": tot = " << totC
-        //      << ", in = " << inC << endl;
+        double totCommunity = tot[community];
+        double inCommunity = in[community];
 
-        q += inC / totalWeight - (totC / totalWeight) * (totC / totalWeight);
+        // Compute the modularity contribution for the community
+        q += (inCommunity / totalWeight) - (totCommunity * totCommunity / (totalWeight * totalWeight));
     }
+
+    return q;
+}
+
+double Community::modularity(int community) {
+    if (community < 0 || community >= (int)tot.size()) {
+        throw out_of_range("Community index out of range");
+    }
+
+    double q = 0.0;
+    double totalWeight = (double)g.totalWeight;  // Total weight of the graph
+    double totCommunity = tot[community];        // Total weight of the community
+    double inCommunity = in[community];          // Internal weight of the community
+
+    // Compute the modularity contribution for the community
+    q += (inCommunity / totalWeight) - (totCommunity * totCommunity / (totalWeight * totalWeight));
 
     return q;
 }
@@ -178,7 +191,7 @@ bool Community::step() {
         // TODO: self loop se è da solo?
         for (const auto& c : neighbourCommunitiesMap) {
             double gain = modularityGain(c.first, c.second, degree);  // Compute the modularity gain for moving the node
-            // cerr << "Node " << node << " to community " << n.first << " gain: " << gain << endl;
+
             if (gain > bestGain) {
                 bestGain = gain;          // Update the best gain found
                 bestCommunity = c.first;  // Update the best community
@@ -188,20 +201,8 @@ bool Community::step() {
 
         insert(node, bestCommunity, bestLinks);  // Insert the node into the best community found
 
-        if (g.isRemote(bestCommunity)) {
-            remoteCommunities.push_back(node);   // Update remote communities mapping
-            remoteWeights.push_back(bestLinks);  // Update remote weights
-        }
-
         if (bestCommunity != community)
             moves++;
-    }
-
-    double totalTot = 0;  // Total incident weights to communities
-    double totalIn = 0;   // Total internal weights for communities
-    for (unsigned int i = 0; i < tot.size(); i++) {
-        totalTot += tot[i];
-        totalIn += in[i];
     }
 
     if (moves > 0)

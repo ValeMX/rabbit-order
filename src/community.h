@@ -16,17 +16,14 @@ class Community {
     Graph& g;           // Graph to compute communities on
     unsigned int size;  // Number of nodes in the graph
 
-    vector<int> n2c;     // Node to community mapping
-    vector<int> tot;     // Total weight of each community
-    vector<int> in;      // Internal weight of each community
+    vector<int> n2c;  // Node to community mapping
+    vector<int> tot;  // Total weight of each community
+    vector<int> in;   // Internal weight of each community
 
     unordered_map<unsigned int, unsigned int> neighbourCommunitiesMap;  // Weights to remote communities
 
     int steps;         // Number of steps for the algorithm
     double threshold;  // Threshold for computing a step
-
-    vector<unsigned int> remoteCommunities;  // Remote communities mapping
-    vector<double> remoteWeights;            // Weights of remote communities
 
     Community(Graph& gb, int st, double thr);
     void resize();                                           // Resize the community structure based on the graph
@@ -41,9 +38,9 @@ class Community {
 
     int degreeN2C(int node);  // Compute the degree of a node to its community
 
-    // Compute the modularity gain for moving a node to a community (using simplified modularity formula)
-    double modularityGain(int community, double weightNodeToCommunity, double weight);
-    double modularity();  // Compute the modularity of the current community structure
+    double modularityGain(int community, double weightNodeToCommunity, double weight);  // Compute the modularity gain for moving a node to a community
+    double modularity();                                                                // Compute the modularity of the current community structure
+    double modularity(int community);                                                   // Compute the modularity of a specific community
 
     bool step();  // Perform a single step of the community detection algorithm
 

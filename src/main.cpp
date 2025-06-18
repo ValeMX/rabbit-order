@@ -34,6 +34,7 @@ void flattener(const vector<vector<T>> &vec, vector<T> &flat) {
 
 void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int rank, vector<unsigned int> &getList, vector<unsigned int> &getProcessList);
 void resolveDuality(vector<int> &n2c);
+double computeModularity(set<unsigned int> &communities, Community &c, Partitioner &p, int rank);
 
 int main(int argc, char **argv) {
     if (argc < 2)
@@ -58,6 +59,10 @@ int main(int argc, char **argv) {
     Partitioner p(size);
     Graph localGraph;
     Graph coarseGraph;
+
+    double threshold = 0.01;  // Threshold for modularity improvement
+    double modularity = 0.0;
+    double newModularity = 0.0;
 
     if (rank == 0) {
         display_time("Start");
@@ -91,6 +96,9 @@ int main(int argc, char **argv) {
             count = p.partitionMap.size();
             MPI_Send(&count, 1, MPI_INT, i, 4, MPI_COMM_WORLD);                          // Send size of partition map
             MPI_Send(p.partitionMap.data(), count, MPI_UNSIGNED, i, 5, MPI_COMM_WORLD);  // Send partition map
+
+            int weight = p.edgeList.size();
+            MPI_Send(&weight, 1, MPI_INT, i, 6, MPI_COMM_WORLD);  // Send number of edges in the graph
         }
 
         // Initialize local graph with partitioned data
@@ -98,6 +106,7 @@ int main(int argc, char **argv) {
         localGraph.nEdges = p.partitionEdges[0].size();
         localGraph.localNodes = set<unsigned int>(p.partitionNodes[0].begin(), p.partitionNodes[0].end());  // Set local nodes
         localGraph.edgeList = p.partitionEdges[0];
+        localGraph.totalWeight = p.edgeList.size();  // Set total weight based on the number of edges
     } else {
         // Receive partitioned data from the root process
         int count;
@@ -119,19 +128,15 @@ int main(int argc, char **argv) {
         MPI_Recv(&count, 1, MPI_INT, 0, 4, MPI_COMM_WORLD, &status);  // Receive size of partition map
         p.partitionMap.resize(count);
         MPI_Recv(p.partitionMap.data(), p.partitionMap.size(), MPI_UNSIGNED, 0, 5, MPI_COMM_WORLD, &status);  // Receive partition map
+
+        int weight;
+        MPI_Recv(&weight, 1, MPI_INT, 0, 6, MPI_COMM_WORLD, &status);  // Receive number of edges in the graph
+        localGraph.totalWeight = weight;                               // Set total weight based on the number of edges
     }
 
-    // if (rank == 0) {
-    //     cerr << "localGraph.edgeList:" << endl;
-    //     for (const auto &edge : localGraph.edgeList) {
-    //         cerr << "(" << edge.first << ", " << edge.second << ")" << endl;
-    //     }
-    // }
-
-    if (rank == 0) cerr << "Initializing local graph..." << endl;
     localGraph.init();
 
-    for (int step = 0; step < 1000; step++) {
+    for (int step = 0; step < 10; step++) {
         // ----------------------------------------------------------------
         // Graph Initialization
         // ----------------------------------------------------------------
@@ -158,43 +163,17 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (rank == 0) cerr << "Collecting remote edges..." << endl;
-
-        // if (rank == 0 && step == 1) {
-        //     cerr << "Local nodes: " << localGraph.localNodes.size() << endl;
-        //     for (const auto &node : localGraph.localNodes) {
-        //         cerr << "Local node: " << node << " from process " << p.owner(node) << endl;  // Log local nodes
-        //     }
-        // }
-
-        // if (rank == 1 && step == 1) {
-        //     cerr << "Collecting remote edges for step 1..." << endl;
-        //     for (const auto &node : getList) {
-        //         cerr << node << " ";  // Log remote nodes to be collected
-        //     }
-        //     cerr << endl;
-        // }
-
         collectMissingNodes(localGraph, c, p, rank, getList, getProcessList);  // Collect missing nodes from remote processes
-
         // ----------------------------------------------------------------
         // Community Detection
         // ----------------------------------------------------------------
-        if (rank == 0) cerr << "Starting community detection..." << endl;
-
-        if (rank == 0) cerr << "Modularity before steps: " << c.modularity() << endl;
+        modularity = computeModularity(localGraph.localNodes, c, p, rank);  // Compute the initial modularity of the community structure
 
         c.step();
-
-        // if (rank == 0) c.print();
-
-        if (rank == 0) cerr << "Modularity: " << c.modularity() << endl;
 
         // ----------------------------------------------------------------
         // Exchange updated communities
         // ----------------------------------------------------------------
-        if (rank == 0) cerr << "Exchanging updated communities..." << endl;
-
         int nodesCount = 0;              // Count of local nodes
         vector<unsigned int> nodesList;  // Flattened list of nodes to get communities for
         vector<int> communitiesList;     // Communities of the remote nodes
@@ -219,8 +198,6 @@ int main(int argc, char **argv) {
 
         MPI_Win_create(communitiesList.data(), communitiesList.size() * sizeof(int), sizeof(int),
                        MPI_INFO_NULL, MPI_COMM_WORLD, &windowCommunities);
-
-        if (rank == 0) cerr << "Windows for communities created. Proceeding to exchange communities..." << endl;
 
         vector<int> receivedCounts(size, 0);  // Count of received nodes
         vector<unsigned int> receivedNodes;   // List of received nodes
@@ -254,8 +231,6 @@ int main(int argc, char **argv) {
         MPI_Win_unlock_all(windowNodes);        // Unlock the window after getting remote communities
         MPI_Win_unlock_all(windowCommunities);  // Unlock the communities window
 
-        if (rank == 0) cerr << "Communities exchanged. Updating local communities..." << endl;
-
         for (unsigned int i = 0; i < receivedNodes.size(); ++i) {
             unsigned int node = receivedNodes[i];             // Get the global id of the node
             unsigned int community = receivedCommunities[i];  // Get the global id of the community
@@ -270,63 +245,21 @@ int main(int argc, char **argv) {
         MPI_Win_free(&windowCount);        // Free the offsets window
         MPI_Win_free(&windowNodes);        // Free the nodes window
         MPI_Win_free(&windowCommunities);  // Free the communities window
-
-        MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before proceeding
-
         // ----------------------------------------------------------------
         // Resolve duality conflicts
         // ----------------------------------------------------------------
-        if (rank == 0) cerr << "Resolving duality conflicts..." << endl;
-
-        // Check if all communities are updated correctly
-        for (const auto &comm : c.n2c) {
-            if (comm < 0 || comm >= c.n2c.size()) {
-                cerr << "A. Rank " << rank << " Error: Node " << &comm - &c.n2c[0] << " is not assigned to any community: " << comm << " in size " << c.n2c.size() << endl;
-            }
-        }
-
-        MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before proceeding
-        if (rank == 0) cerr << "All processes synchronized. Proceeding to resolve duality conflicts..." << endl;
-
-        // Resolve duality
         resolveDuality(c.n2c);  // Resolve duality conflicts in the community mapping
 
         map<int, vector<unsigned int>> c2n;
+        set<unsigned int> communitiesSet;  // Set to store unique communities
         for (size_t i = 0; i < c.n2c.size(); ++i) {
             c2n[c.n2c[i]].push_back(i);
+            communitiesSet.insert(c.n2c[i]);  // Insert the community into the set
         }
-
-        if (c2n.size() <= size) {
-            if (rank == 0) {
-                cerr << "Warning: Number of communities (" << c2n.size() << ") is less than or equal to the number of processes (" << size << "). This may lead to suboptimal partitioning." << endl;
-            }
-            break;  // Exit the loop if the number of communities is less than or equal to the number of processes
-        }
-
-        for (const auto &comm : c.n2c) {
-            if (comm < 0 || comm >= c.n2c.size()) {
-                cerr << "B. Rank " << rank << " Error: Node " << &comm - &c.n2c[0] << " is not assigned to any community: " << comm << " in size " << c.n2c.size() << endl;
-            }
-        }
-
-        if (rank == 0) cerr << "Duality conflicts resolved." << endl;
-
-        // if (rank == 0) {
-        //     cerr << "Local communities: " << endl;
-        //     for (const auto &kv : c2n) {
-        //         cout << "Community " << kv.first << ": ";
-        //         for (const auto &node : kv.second) {
-        //             cout << node << " ";
-        //         }
-        //         cout << endl;
-        //     }
-        // }
 
         // ----------------------------------------------------------------
         // Collecting missing nodes for coarsening
         // ----------------------------------------------------------------
-        if (rank == 0) cerr << "Collecting missing nodes for coarsening..." << endl;
-
         getList.resize(0);         // List of remote nodes to retrieve
         getProcessList.resize(0);  // List of processes to get remote nodes from
         for (const auto &community : c2n) {
@@ -345,25 +278,76 @@ int main(int argc, char **argv) {
         }
 
         collectMissingNodes(localGraph, c, p, rank, getList, getProcessList);  // Collect missing nodes from remote processes
+        newModularity = computeModularity(communitiesSet, c, p, rank);         // Compute the modularity of the current community structure
 
-        for (const auto &comm : c.n2c) {
-            if (comm < 0 || comm >= c.n2c.size()) {
-                cerr << "D. Rank " << rank << " Error: Node " << &comm - &c.n2c[0] << " is not assigned to any community: " << comm << " in size " << c.n2c.size() << endl;
-            }
+        if (rank == 0) {
+            cerr << "Modularity before step " << step << ": " << modularity << endl;
+            cerr << "Modularity after step " << step << ": " << newModularity << endl;
+            cerr << "Modularity gain: " << newModularity - modularity << endl;
+        }
+
+        // if (newModularity - modularity < threshold) {
+        //     if (rank == 0) {
+        //         cerr << "Modularity improvement below threshold (" << modularity << " -> " << newModularity << ") in step " << step << ". Stopping community detection." << endl;
+        //     }
+        //     break;  // Exit the loop if the modularity improvement is below the threshold
+        // }
+
+        modularity = newModularity;  // Update the modularity for the next iteration
+
+        // ----------------------------------------------------------------
+        // Communities renumbering
+        // ----------------------------------------------------------------
+        map<int, int> old2new;  // Map to store new community indices
+        vector<int> new2old;    // Vector to store community IDs
+        for (const auto &community : c2n) {
+            old2new[community.first] = old2new.size();  // Assign new indices to communities
+            new2old.push_back(community.first);         // Store the old community ID
         }
 
         // ----------------------------------------------------------------
         // Graph coarsening
         // ----------------------------------------------------------------
-
-        MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before proceeding
-        if (rank == 0) cerr << "Coarsening graph..." << endl;
-
-        // Create a new graph for coarsening
         Graph coarseGraph;
-        coarseGraph.coarse(localGraph, p, rank, c.n2c, c2n);  // Coarsen the graph based on the local graph and communities
+        getList.resize(0);         // List of remote nodes to retrieve
+        getProcessList.resize(0);  // List of processes to get remote nodes from
+        for (const auto &community : c2n) {
+            if (old2new[community.first] % size != rank) continue;    // Skip communities not owned by the current process
+            coarseGraph.localNodes.insert(old2new[community.first]);  // Add the community to the local nodes of the coarse graph
 
-        localGraph = move(coarseGraph);  // Move the coarse graph to the local graph
+            for (const auto &node : community.second) {      // Add the node to the local nodes of the coarse graph
+                if (localGraph.isCollected(node)) continue;  // Skip if the node is already collected
+
+                if (find(getList.begin(), getList.end(), node) == getList.end()) {
+                    getList.push_back(node);  // Add remote node to the get list if not already present
+                }
+
+                if (find(getProcessList.begin(), getProcessList.end(), p.owner(node)) == getProcessList.end()) {
+                    getProcessList.push_back(p.owner(node));  // Add the owner process of the remote node to the get process list
+                }
+            }
+        }
+
+        collectMissingNodes(localGraph, c, p, rank, getList, getProcessList);   // Collect missing nodes from remote processes
+        p.updatePartition(new2old);                                             // Update the partition map with the new community indices
+        coarseGraph.coarse(localGraph, p, rank, c.n2c, c2n, new2old, old2new);  // Coarsen the graph
+        localGraph = move(coarseGraph);                                         // Move the coarse graph to the local graph
+
+        // if (rank == 0) cerr << "Communities found: " << c2n.size() << endl;
+        // for (const auto &comm : c2n) {
+        //     cerr << "Community " << comm.first << ": ";
+        //     for (const auto &node : comm.second) {
+        //         cerr << node << " ";  // Log the nodes in the community
+        //     }
+        //     cerr << endl;  // New line after each community
+        // }
+    }
+
+    time(&timeEnd);
+    if (rank == 0) {
+        cerr << endl;
+        display_time("End");
+        cerr << "Total time: " << difftime(timeEnd, timeBegin) << " seconds" << endl;
     }
 
     MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before proceeding
@@ -408,11 +392,7 @@ void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int ra
                        MPI_INFO_NULL, MPI_COMM_WORLD, &windowWeights);
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before proceeding
-    if (rank == 0) cerr << "Windows setup complete. Initiating remote edge collection..." << endl;
-
     // Get offsets of the neighbour lists from all processes
-
     vector<unsigned long> neighbourOffsets(2 * getList.size());  // Offsets for each node's neighbour list
     int it = 0;
 
@@ -427,9 +407,6 @@ void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int ra
         it++;
     }
     MPI_Win_unlock_all(windowOffsets);  // Unlock the window after getting offsets
-
-    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before proceeding
-    if (rank == 0) cerr << "Offsets collected. Proceeding to get remote neighbours..." << endl;
 
     it = 0;                                                           // Reset iterator for neighbour offsets
     MPI_Win_lock_all(MPI_MODE_NOCHECK, windowNodes);                  // Lock the window for all processes
@@ -467,15 +444,11 @@ void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int ra
     MPI_Win_unlock_all(windowNodes);                  // Unlock the window after getting remote neighbours
     if (weighted) MPI_Win_unlock_all(windowWeights);  // Unlock the weights window if weighted
 
-    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before proceeding
-    if (rank == 0) cerr << "Remote neighbours collected. Proceeding to update communities..." << endl;
-
     // Update the local graph with remote nodes and their communities
     c.resize();  // Resize the community structure based on the local graph
     for (const auto &node : getList) {
         int community = c.n2c[node] < 0 ? node : c.n2c[node];  // Get the community of the remote node, or use the node itself if not assigned
         unsigned int degree = localGraph.degree(node);         // Get the degree of the remote node
-        localGraph.totalWeight += degree;                      // Update the total weight of the graph
         c.updateRemote(node, community, degree);               // Update the community structure with the remote node
     }
 
@@ -504,4 +477,35 @@ void resolveDuality(vector<int> &n2c) {
             current = next;
         }
     }
+}
+
+double computeModularity(set<unsigned int> &communities, Community &c, Partitioner &p, int rank) {
+    double modularity = 0.0;
+    double localModularity = 0.0;                             // Compute the local modularity
+    vector<double> globalModularities(p.numberOfPartitions);  // Vector to hold global modularities from all processes
+
+    for (const auto &community : communities) {
+        if (p.owner(community) != rank) continue;    // Skip if the community is not owned by the current process
+        localModularity += c.modularity(community);  // Accumulate the modularity for the local community
+    }
+
+    MPI_Win windowModularity;
+
+    MPI_Win_create(&localModularity, sizeof(double), sizeof(double),
+                   MPI_INFO_NULL, MPI_COMM_WORLD, &windowModularity);  // Create a window
+
+    MPI_Win_lock_all(MPI_MODE_NOCHECK, windowModularity);  // Lock the window for all processes
+    for (int i = 0; i < p.numberOfPartitions; ++i) {
+        if (i == rank) {
+            globalModularities[i] = localModularity;  // Set the local modularity for the current process
+        } else {
+            MPI_Get(&globalModularities[i], 1, MPI_DOUBLE, i, 0, 1, MPI_DOUBLE, windowModularity);  // Get the modularity from other processes
+        }
+    }
+    MPI_Win_unlock_all(windowModularity);  // Unlock the window after reduction
+    MPI_Win_free(&windowModularity);       // Free the window
+
+    modularity = accumulate(globalModularities.begin(), globalModularities.end(), 0.0);  // Sum up the modularities from all processes
+
+    return modularity;  // Return the global modularity
 }

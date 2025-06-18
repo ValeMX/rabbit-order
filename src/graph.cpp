@@ -28,7 +28,6 @@ void Graph::init() {
 
     nNodes = localNodes.size();
     nEdges = edgeList.size();
-    totalWeight = 0;
     neighboursList.resize(maxNode + 1);  // Resize the neighbours list to the number of local nodes
 
     // Populate neighbours list
@@ -37,34 +36,22 @@ void Graph::init() {
         unsigned int dst = edgeList[i].second;
 
         neighboursList[src].push_back(dst);
-        totalWeight++;
     }
 }
 
-void Graph::coarse(Graph& g, Partitioner& p, int rank, vector<int>& n2c, map<int, vector<unsigned int>>& c2n) {
-    // Firstly renumber the communities
-    map<int, int> old2new;  // Map to store new community indices
-    vector<int> new2old;    // Vector to store community IDs
-    for (const auto& community : c2n) {
-        old2new[community.first] = old2new.size();  // Assign new indices to communities
-        new2old.push_back(community.first);         // Store the old community ID
-        if (p.owner(community.first) == rank)
-            localNodes.insert(old2new[community.first]);  // Insert the new community index into local nodes if owned by this rank
-    }
-
-    p.updatePartition(new2old);  // Update the partition map with the new community indices
-
-    neighboursList.resize(old2new.size());  // Resize the neighbours list to the number of communities
-    weights.resize(old2new.size());         // Resize the weights vector to the number of communities
-    nNodes = localNodes.size();             // Update the number of local nodes
-    totalWeight = 0;                        // Reset total weight
+void Graph::coarse(Graph& g, Partitioner& p, int rank, vector<int>& n2c, map<int, vector<unsigned int>>& c2n, vector<int>& new2old, map<int, int>& old2new) {
+    int size = c2n.size();        // Get the number of communities
+    neighboursList.resize(size);  // Resize the neighbours list to the number of communities
+    weights.resize(size);         // Resize the weights vector to the number of communities
+    nNodes = localNodes.size();   // Update the number of local nodes
+    totalWeight = g.totalWeight;  // Update the total weight of the graph
     if (g.weights.empty()) {
         for (const auto& community : localNodes) {
-            if (community >= new2old.size()) {
+            if (community >= size) {
                 throw out_of_range("Community index out of range in new2old");
             }
 
-            vector<int> neighbourCommunities(old2new.size(), 0);  // Initialize neighbour communities vector
+            vector<int> neighbourCommunities(size, 0);  // Initialize neighbour communities vector
             for (const auto& node : c2n[new2old[community]]) {
                 if (!g.isCollected(node)) {
                     std::cerr << "Rank: " << rank << " Invalid node index: " << node << " (max " << g.neighboursList.size() - 1 << ")" << std::endl;
@@ -84,7 +71,6 @@ void Graph::coarse(Graph& g, Partitioner& p, int rank, vector<int>& n2c, map<int
                         std::cerr << "Rank: " << rank << "neighbourCommunity " << neighbourCommunity << " non trovato in old2new\n";
                     }
                     neighbourCommunities[old2new[neighbourCommunity]]++;  // Increment the count for the neighbour community
-                    totalWeight++;                                        // Increment the total weight for each edge
                 }
             }
 
@@ -103,7 +89,6 @@ void Graph::coarse(Graph& g, Partitioner& p, int rank, vector<int>& n2c, map<int
                 for (const auto& neighbour : g.neighboursList[node]) {
                     int neighbourCommunity = n2c[neighbour];                   // Get the community of the neighbour
                     neighbourCommunities[old2new[neighbourCommunity]] += *it;  // Increment the weight for the neighbour community
-                    totalWeight += *it;                                        // Increment the total weight for each edge
                     ++it;                                                      // Move to the next weight
                 }
             }
@@ -189,5 +174,4 @@ unsigned int Graph::selfLoops(unsigned int node) {
 
 void Graph::addEdge(unsigned int source, unsigned int destination) {
     neighboursList[source].push_back(destination);  // Add destination to the source's neighbours
-    totalWeight++;                                  // Update total weight
 }
