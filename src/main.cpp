@@ -37,6 +37,7 @@ int main(int argc, char **argv) {
     // Distribute Graph
     // ----------------------------------------------------------------
     double startTime = MPI_Wtime();
+    double stepTime = 0.0;
 
     Partitioner p(size);
     Graph localGraph;
@@ -60,27 +61,57 @@ int main(int argc, char **argv) {
         }
 
         p.staticPartition(fileName);
+    }
 
-        // Send partitioned data to all processes: nodes, cumulative degrees, edges, and weights
-        for (unsigned int i = 1; i < size; i++) {
-            int count = p.partitionNodes[i].size();
-            MPI_Send(&count, 1, MPI_INT, i, 0, MPI_COMM_WORLD);                               // Send number of nodes
-            MPI_Send(p.partitionNodes[i].data(), count, MPI_UNSIGNED, i, 1, MPI_COMM_WORLD);  // Send nodes
+    vector<unsigned long> nodesOffsets(size + 1, 0);
+    vector<unsigned long> edgesOffsets(size + 1, 0);
+    vector<unsigned int> partitionNodes;
+    vector<pair<unsigned int, unsigned int>> partitionEdges;
+    int totalNodes = p.partitionMap.size();  // Total number of nodes in the graph
+    int totalWeight = p.edgeList.size();     // Total weight of the graph
 
-            count = p.partitionEdges[i].size();
-            int bytes = count * sizeof(pair<unsigned int, unsigned int>);
+    if (rank == 0) {
+        nodesOffsets[0] = 0;  // Initialize offsets for nodes
+        edgesOffsets[0] = 0;  // Initialize offsets for edges
 
-            MPI_Send(&count, 1, MPI_INT, i, 2, MPI_COMM_WORLD);                                                     // Send number of edges
-            MPI_Send(reinterpret_cast<void *>(p.partitionEdges[i].data()), bytes, MPI_BYTE, i, 3, MPI_COMM_WORLD);  // Send edges
-
-            count = p.partitionMap.size();
-            MPI_Send(&count, 1, MPI_INT, i, 4, MPI_COMM_WORLD);                          // Send size of partition map
-            MPI_Send(p.partitionMap.data(), count, MPI_UNSIGNED, i, 5, MPI_COMM_WORLD);  // Send partition map
-
-            int weight = p.edgeList.size();
-            MPI_Send(&weight, 1, MPI_INT, i, 6, MPI_COMM_WORLD);  // Send number of edges in the graph
+        for (unsigned int i = 0; i < p.partitionNodes.size(); i++) {
+            nodesOffsets[i + 1] = nodesOffsets[i] + p.partitionNodes[i].size();                                   // Cumulative sum of nodes
+            edgesOffsets[i + 1] = edgesOffsets[i] + p.partitionEdges[i].size();                                   // Cumulative sum of edges
+            partitionNodes.insert(partitionNodes.end(), p.partitionNodes[i].begin(), p.partitionNodes[i].end());  // Collect nodes
+            partitionEdges.insert(partitionEdges.end(), p.partitionEdges[i].begin(), p.partitionEdges[i].end());  // Collect edges
         }
+    }
 
+    MPI_Win totalNodesWin;
+    MPI_Win totalWeightWin;
+    MPI_Win nodesOffsetsWin;
+    MPI_Win edgesOffsetsWin;
+    MPI_Win partitionNodesWin;
+    MPI_Win partitionEdgesWin;
+    MPI_Win partitionMapWin;
+
+    // Create MPI windows for shared data
+    MPI_Win_create(&totalNodes, sizeof(int), sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &totalNodesWin);
+    MPI_Win_create(&totalWeight, sizeof(int), sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &totalWeightWin);
+    MPI_Win_create(nodesOffsets.data(), nodesOffsets.size() * sizeof(unsigned long), sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &nodesOffsetsWin);
+    MPI_Win_create(edgesOffsets.data(), edgesOffsets.size() * sizeof(unsigned long), sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &edgesOffsetsWin);
+    MPI_Win_create(partitionNodes.data(), partitionNodes.size() * sizeof(unsigned int), sizeof(unsigned int), MPI_INFO_NULL, MPI_COMM_WORLD, &partitionNodesWin);
+    MPI_Win_create(partitionEdges.data(), partitionEdges.size() * sizeof(pair<unsigned int, unsigned int>), 1, MPI_INFO_NULL, MPI_COMM_WORLD, &partitionEdgesWin);
+    MPI_Win_create(p.partitionMap.data(), p.partitionMap.size() * sizeof(unsigned int), sizeof(unsigned int), MPI_INFO_NULL, MPI_COMM_WORLD, &partitionMapWin);
+
+    unsigned long localNodesOffsets[2];
+    unsigned long localEdgesOffsets[2];
+
+    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before starting the partitioning
+    if (rank == 0) {
+        cout << "Starting graph partitioning..." << endl;
+    }
+
+    MPI_Win_lock_all(MPI_MODE_NOCHECK, totalNodesWin);
+    MPI_Win_lock_all(MPI_MODE_NOCHECK, totalWeightWin);
+    MPI_Win_lock_all(MPI_MODE_NOCHECK, nodesOffsetsWin);
+    MPI_Win_lock_all(MPI_MODE_NOCHECK, edgesOffsetsWin);
+    if (rank == 0) {
         // Initialize local graph with partitioned data
         localGraph.nNodes = p.partitionNodes[0].size();
         localGraph.nEdges = p.partitionEdges[0].size();
@@ -88,35 +119,70 @@ int main(int argc, char **argv) {
         localGraph.edgeList = p.partitionEdges[0];
         localGraph.totalWeight = p.edgeList.size();  // Set total weight based on the number of edges
     } else {
-        // Receive partitioned data from the root process
-        int count;
-        MPI_Status status;
+        MPI_Get(&totalNodes, 1, MPI_INT, 0, 0, 1, MPI_INT, totalNodesWin);                                  // Get total number of nodes
+        MPI_Get(&totalWeight, 1, MPI_INT, 0, 0, 1, MPI_INT, totalWeightWin);                                // Get total weight of the graph
+        MPI_Get(&localNodesOffsets, 2, MPI_UNSIGNED_LONG, 0, rank, 2, MPI_UNSIGNED_LONG, nodesOffsetsWin);  // Get local nodes offsets
+        MPI_Get(&localEdgesOffsets, 2, MPI_UNSIGNED_LONG, 0, rank, 2, MPI_UNSIGNED_LONG, edgesOffsetsWin);  // Get local edges offsets
+    }
+    MPI_Win_unlock_all(totalNodesWin);
+    MPI_Win_unlock_all(totalWeightWin);
+    MPI_Win_unlock_all(nodesOffsetsWin);
+    MPI_Win_unlock_all(edgesOffsetsWin);
 
-        MPI_Recv(&count, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);  // Receive number of nodes
-        vector<unsigned int> localNodes(count);
-        MPI_Recv(localNodes.data(), count, MPI_UNSIGNED, 0, 1, MPI_COMM_WORLD, &status);  // Receive nodes
-        localGraph.localNodes = set<unsigned int>(localNodes.begin(), localNodes.end());  // Set local nodes
+    vector<unsigned int> localNodes;
 
-        MPI_Recv(&count, 1, MPI_INT, 0, 2, MPI_COMM_WORLD, &status);  // Receive number of edges
+    MPI_Win_lock_all(MPI_MODE_NOCHECK, partitionNodesWin);
+    MPI_Win_lock_all(MPI_MODE_NOCHECK, partitionEdgesWin);
+    MPI_Win_lock_all(MPI_MODE_NOCHECK, partitionMapWin);
+    if (rank != 0) {
+        // Resize local graph based on the offsets received
+        localGraph.nNodes = localNodesOffsets[1] - localNodesOffsets[0];
+        localGraph.nEdges = localEdgesOffsets[1] - localEdgesOffsets[0];
+        localGraph.totalWeight = totalWeight;           // Set total weight based on the number of edges
+        localGraph.localNodes.clear();                  // Resize local nodes set
+        localGraph.edgeList.resize(localGraph.nEdges);  // Resize edge list to the number of edges
+        p.partitionMap.resize(totalNodes);              // Resize partition map to the total number of nodes
+        int bytes = sizeof(pair<unsigned int, unsigned int>);
 
-        int bytes = count * sizeof(pair<unsigned int, unsigned int>);
-        localGraph.nEdges = count;
-        localGraph.edgeList.resize(count);
+        localNodes.resize(localGraph.nNodes);                                                                                                                               // Resize local nodes vector
+        MPI_Get(localNodes.data(), localGraph.nNodes, MPI_UNSIGNED, 0, localNodesOffsets[0], localGraph.nNodes, MPI_UNSIGNED, partitionNodesWin);                           // Get local nodes
+        MPI_Get(localGraph.edgeList.data(), localGraph.nEdges * bytes, MPI_BYTE, 0, localEdgesOffsets[0] * bytes, localGraph.nEdges * bytes, MPI_BYTE, partitionEdgesWin);  // Get local edges
+        MPI_Get(p.partitionMap.data(), totalNodes, MPI_UNSIGNED, 0, 0, totalNodes, MPI_UNSIGNED, partitionMapWin);                                                          // Get partition map
+    }
+    MPI_Win_unlock_all(partitionNodesWin);
+    MPI_Win_unlock_all(partitionEdgesWin);
+    MPI_Win_unlock_all(partitionMapWin);
 
-        MPI_Recv(localGraph.edgeList.data(), bytes, MPI_BYTE, 0, 3, MPI_COMM_WORLD, &status);  // Receive edges
+    if (rank != 0) {
+        localGraph.localNodes = set<unsigned int>(localNodes.begin(), localNodes.end());  // Convert local nodes vector to a set for fast access
+    }
 
-        MPI_Recv(&count, 1, MPI_INT, 0, 4, MPI_COMM_WORLD, &status);  // Receive size of partition map
-        p.partitionMap.resize(count);
-        MPI_Recv(p.partitionMap.data(), p.partitionMap.size(), MPI_UNSIGNED, 0, 5, MPI_COMM_WORLD, &status);  // Receive partition map
+    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before starting the partitioning
+    if (rank == 0) {
+        cout << "Graph partitioning initialized." << endl;
+    }
 
-        int weight;
-        MPI_Recv(&weight, 1, MPI_INT, 0, 6, MPI_COMM_WORLD, &status);  // Receive number of edges in the graph
-        localGraph.totalWeight = weight;                               // Set total weight based on the number of edges
+    MPI_Win_free(&totalNodesWin);  // Free the MPI windows
+    MPI_Win_free(&totalWeightWin);
+    MPI_Win_free(&nodesOffsetsWin);
+    MPI_Win_free(&edgesOffsetsWin);
+    MPI_Win_free(&partitionNodesWin);
+    MPI_Win_free(&partitionEdgesWin);
+    MPI_Win_free(&partitionMapWin);
+
+    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes
+    if (rank == 0) {
+        cout << "Graph partitioning completed in " << MPI_Wtime() - startTime << " seconds." << endl;
     }
 
     double partitionTime = MPI_Wtime();  // Measure partitioning time
 
     localGraph.init();
+
+    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before starting the community detection
+    if (rank == 0) {
+        cout << "Starting community detection..." << endl;
+    }
 
     int step = 0;
     while (true) {
@@ -147,9 +213,12 @@ int main(int argc, char **argv) {
         // ----------------------------------------------------------------
         // Community Detection
         // ----------------------------------------------------------------
-        modularity = computeModularity(localGraph.localNodes, c, p, rank);  // Compute the initial modularity of the community structure
+        // modularity = computeModularity(localGraph.localNodes, c, p, rank);  // Compute the initial modularity of the community structure
 
+        double startStepTime = MPI_Wtime();  // Start time for the step
         c.step();
+        double stepTime = MPI_Wtime() - startStepTime;  // Calculate the time taken for the step
+        stepTime += stepTime;                           // Accumulate the detection time
 
         // ----------------------------------------------------------------
         // Exchange updated communities
@@ -264,7 +333,7 @@ int main(int argc, char **argv) {
         }
 
         collectMissingNodes(localGraph, c, p, rank, getList, getProcessList);  // Collect missing nodes from remote processes
-        newModularity = computeModularity(communitiesSet, c, p, rank);         // Compute the modularity of the current community structure
+        // newModularity = computeModularity(communitiesSet, c, p, rank);         // Compute the modularity of the current community structure
 
         // if (rank == 0) {
         //     cerr << "Modularity before step " << step << ": " << modularity << endl;
@@ -345,11 +414,12 @@ int main(int argc, char **argv) {
         }
 
         if (!fileExists)
-            outFile << "size,totalTime,partitionTime,detectionTime,foundCommunities,fileName" << endl;  // Write header if file does not exist
+            outFile << "size,totalTime,partitionTime,stepTime,detectionTime,foundCommunities,fileName" << endl;  // Write header if file does not exist
 
         outFile << size << ","
                 << endTime - startTime << ","
                 << partitionTime - startTime << ","
+                << stepTime << ","
                 << endTime - partitionTime << ","
                 << foundCommunities << ","
                 << fileName << endl;  // Write the results to the output file
