@@ -39,7 +39,7 @@ void Graph::init() {
     }
 }
 
-void Graph::coarse(Graph& g, Partitioner& p, int rank, vector<int>& n2c, map<int, vector<unsigned int>>& c2n, vector<int>& new2old, map<int, int>& old2new) {
+void Graph::coarsen(Graph& g, Partitioner& p, int rank, vector<int>& n2c, map<int, vector<unsigned int>>& c2n, vector<int>& new2old, map<int, int>& old2new) {
     int size = c2n.size();        // Get the number of communities
     neighboursList.resize(size);  // Resize the neighbours list to the number of communities
     weights.resize(size);         // Resize the weights vector to the number of communities

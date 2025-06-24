@@ -17,7 +17,7 @@ using namespace std;
 
 char *fileName = NULL;
 
-void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int rank, vector<unsigned int> &getList, vector<unsigned int> &getProcessList);
+void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int rank, vector<unsigned int> &getList);
 void resolveDuality(vector<int> &n2c);
 double computeModularity(set<unsigned int> &communities, Community &c, Partitioner &p, int rank);
 
@@ -33,11 +33,15 @@ int main(int argc, char **argv) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
+    double s, e;
+    double startTime = .0, partitionTime = .0, distributionTime = .0, stepTime = .0,
+           collectingRemoteTime = .0, detectionTime = .0, exchangingCommunitiesTime = .0, collectingMissingTime = .0, coarsenTime = .0;
+
     // ----------------------------------------------------------------
     // Distribute Graph
     // ----------------------------------------------------------------
-    double startTime = MPI_Wtime();
-    double stepTime = 0.0;
+    startTime = MPI_Wtime();
+    stepTime = 0.0;
 
     Partitioner p(size);
     Graph localGraph;
@@ -60,9 +64,14 @@ int main(int argc, char **argv) {
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
 
+        s = MPI_Wtime();  // Start time for reading the file
         p.staticPartition(fileName);
+        e = MPI_Wtime();  // End time for reading the file
     }
 
+    partitionTime = e - s;  // Calculate partitioning time
+
+    s = MPI_Wtime();
     vector<unsigned long> nodesOffsets(size + 1, 0);
     vector<unsigned long> edgesOffsets(size + 1, 0);
     vector<unsigned int> partitionNodes;
@@ -101,11 +110,6 @@ int main(int argc, char **argv) {
 
     unsigned long localNodesOffsets[2];
     unsigned long localEdgesOffsets[2];
-
-    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before starting the partitioning
-    if (rank == 0) {
-        cout << "Starting graph partitioning..." << endl;
-    }
 
     MPI_Win_lock_all(MPI_MODE_NOCHECK, totalNodesWin);
     MPI_Win_lock_all(MPI_MODE_NOCHECK, totalWeightWin);
@@ -157,11 +161,6 @@ int main(int argc, char **argv) {
         localGraph.localNodes = set<unsigned int>(localNodes.begin(), localNodes.end());  // Convert local nodes vector to a set for fast access
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before starting the partitioning
-    if (rank == 0) {
-        cout << "Graph partitioning initialized." << endl;
-    }
-
     MPI_Win_free(&totalNodesWin);  // Free the MPI windows
     MPI_Win_free(&totalWeightWin);
     MPI_Win_free(&nodesOffsetsWin);
@@ -170,20 +169,11 @@ int main(int argc, char **argv) {
     MPI_Win_free(&partitionEdgesWin);
     MPI_Win_free(&partitionMapWin);
 
-    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes
-    if (rank == 0) {
-        cout << "Graph partitioning completed in " << MPI_Wtime() - startTime << " seconds." << endl;
-    }
-
-    double partitionTime = MPI_Wtime();  // Measure partitioning time
+    distributionTime = MPI_Wtime() - s;  // Calculate distribution time
 
     localGraph.init();
 
-    MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before starting the community detection
-    if (rank == 0) {
-        cout << "Starting community detection..." << endl;
-    }
-
+    stepTime = MPI_Wtime();
     int step = 0;
     while (true) {
         // ----------------------------------------------------------------
@@ -194,8 +184,9 @@ int main(int argc, char **argv) {
         // ----------------------------------------------------------------
         // Collection of remote edges
         // ----------------------------------------------------------------
-        vector<unsigned int> getList;         // List of remote nodes to retrieve
-        vector<unsigned int> getProcessList;  // List of processes to get remote nodes from
+        s = MPI_Wtime();  // Start time for collecting remote edges
+
+        vector<unsigned int> getList;  // List of remote nodes to retrieve
         for (const auto &node : localGraph.localNodes) {
             vector<unsigned int> remoteNeighbours = localGraph.remoteNeighbours(node);
 
@@ -203,26 +194,26 @@ int main(int argc, char **argv) {
                 if (find(getList.begin(), getList.end(), remoteNode) == getList.end()) {
                     getList.push_back(remoteNode);  // Add remote node to the get list if not already present
                 }
-                if (find(getProcessList.begin(), getProcessList.end(), p.owner(remoteNode)) == getProcessList.end()) {
-                    getProcessList.push_back(p.owner(remoteNode));  // Add the owner process of the remote node to the get process list
-                }
             }
         }
 
-        collectMissingNodes(localGraph, c, p, rank, getList, getProcessList);  // Collect missing nodes from remote processes
+        collectMissingNodes(localGraph, c, p, rank, getList);  // Collect missing nodes from remote processes
+
+        e = MPI_Wtime();                // End time for collecting remote edges
+        collectingRemoteTime += e - s;  // Calculate collecting remote edges time
         // ----------------------------------------------------------------
         // Community Detection
         // ----------------------------------------------------------------
-        // modularity = computeModularity(localGraph.localNodes, c, p, rank);  // Compute the initial modularity of the community structure
-
-        double startStepTime = MPI_Wtime();  // Start time for the step
+        s = MPI_Wtime();  // Start time for the step
         c.step();
-        double stepTime = MPI_Wtime() - startStepTime;  // Calculate the time taken for the step
-        stepTime += stepTime;                           // Accumulate the detection time
+        e = MPI_Wtime();         // End time for the step
+        detectionTime += e - s;  // Calculate step time
 
         // ----------------------------------------------------------------
         // Exchange updated communities
         // ----------------------------------------------------------------
+        s = MPI_Wtime();  // Start time for exchanging communities
+
         int nodesCount = 0;              // Count of local nodes
         vector<unsigned int> nodesList;  // Flattened list of nodes to get communities for
         vector<int> communitiesList;     // Communities of the remote nodes
@@ -294,6 +285,9 @@ int main(int argc, char **argv) {
         MPI_Win_free(&windowCount);        // Free the offsets window
         MPI_Win_free(&windowNodes);        // Free the nodes window
         MPI_Win_free(&windowCommunities);  // Free the communities window
+
+        e = MPI_Wtime();                     // End time for the step
+        exchangingCommunitiesTime += e - s;  // Calculate time for exchanging communities
         // ----------------------------------------------------------------
         // Resolve duality conflicts
         // ----------------------------------------------------------------
@@ -313,38 +307,6 @@ int main(int argc, char **argv) {
         }
 
         // ----------------------------------------------------------------
-        // Collecting missing nodes for coarsening
-        // ----------------------------------------------------------------
-        getList.resize(0);         // List of remote nodes to retrieve
-        getProcessList.resize(0);  // List of processes to get remote nodes from
-        for (const auto &community : c2n) {
-            for (const auto &node : community.second) {
-                if (localGraph.isCollected(node)) {
-                    continue;  // Skip if the node is already collected
-                }
-
-                if (find(getList.begin(), getList.end(), node) == getList.end()) {
-                    getList.push_back(node);  // Add remote node to the get list if not already present
-                }
-                if (find(getProcessList.begin(), getProcessList.end(), p.owner(node)) == getProcessList.end()) {
-                    getProcessList.push_back(p.owner(node));  // Add the owner process of the remote node to the get process list
-                }
-            }
-        }
-
-        collectMissingNodes(localGraph, c, p, rank, getList, getProcessList);  // Collect missing nodes from remote processes
-        // newModularity = computeModularity(communitiesSet, c, p, rank);         // Compute the modularity of the current community structure
-
-        // if (rank == 0) {
-        //     cerr << "Modularity before step " << step << ": " << modularity << endl;
-        //     cerr << "Modularity after step " << step << ": " << newModularity << endl;
-        //     cerr << "Modularity gain: " << newModularity - modularity << endl;
-        //     cerr << "Communities found: " << c2n.size() << endl;
-        // }
-
-        modularity = newModularity;  // Update the modularity for the next iteration
-
-        // ----------------------------------------------------------------
         // Communities renumbering
         // ----------------------------------------------------------------
         map<int, int> old2new;  // Map to store new community indices
@@ -357,9 +319,10 @@ int main(int argc, char **argv) {
         // ----------------------------------------------------------------
         // Graph coarsening
         // ----------------------------------------------------------------
+        s = MPI_Wtime();  // Start time for graph coarsening
+
         Graph coarseGraph;
-        getList.resize(0);         // List of remote nodes to retrieve
-        getProcessList.resize(0);  // List of processes to get remote nodes from
+        getList.resize(0);  // List of remote nodes to retrieve
         for (const auto &community : c2n) {
             if (old2new[community.first] % size != rank) continue;    // Skip communities not owned by the current process
             coarseGraph.localNodes.insert(old2new[community.first]);  // Add the community to the local nodes of the coarse graph
@@ -370,38 +333,33 @@ int main(int argc, char **argv) {
                 if (find(getList.begin(), getList.end(), node) == getList.end()) {
                     getList.push_back(node);  // Add remote node to the get list if not already present
                 }
-
-                if (find(getProcessList.begin(), getProcessList.end(), p.owner(node)) == getProcessList.end()) {
-                    getProcessList.push_back(p.owner(node));  // Add the owner process of the remote node to the get process list
-                }
             }
         }
 
-        collectMissingNodes(localGraph, c, p, rank, getList, getProcessList);   // Collect missing nodes from remote processes
-        p.updatePartition(new2old);                                             // Update the partition map with the new community indices
-        coarseGraph.coarse(localGraph, p, rank, c.n2c, c2n, new2old, old2new);  // Coarsen the graph
-        localGraph = move(coarseGraph);                                         // Move the coarse graph to the local graph
+        collectMissingNodes(localGraph, c, p, rank, getList);  // Collect missing nodes from remote processes
 
-        // if (rank == 0) cerr << "Communities found: " << c2n.size() << endl;
-        // for (const auto &comm : c2n) {
-        //     cerr << "Community " << comm.first << ": ";
-        //     for (const auto &node : comm.second) {
-        //         cerr << node << " ";  // Log the nodes in the community
-        //     }
-        //     cerr << endl;  // New line after each community
-        // }
+        e = MPI_Wtime();                 // End time for graph coarsening
+        collectingMissingTime += e - s;  // Calculate time for collecting missing nodes
 
-        step++;  // Increment the step counter for each remote node processed
+        p.updatePartition(new2old);  // Update the partition map with the new community indices
+
+        s = MPI_Wtime();                                                         // Start time for graph coarsening
+        coarseGraph.coarsen(localGraph, p, rank, c.n2c, c2n, new2old, old2new);  // Coarsen the graph
+        e = MPI_Wtime();                                                         // End time for graph coarsening
+        coarsenTime += e - s;                                                    // Calculate time for graph coarsening
+
+        localGraph = move(coarseGraph);  // Move the coarse graph to the local graph
+        step++;                          // Increment the step counter for each remote node processed
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);   // Synchronize all processes before finalizing
-    double endTime = MPI_Wtime();  // Get the end time of the computation
+    stepTime = MPI_Wtime() - stepTime;  // Calculate the total time for the steps
+    double endTime = MPI_Wtime();       // Get the end time of the computation
 
     if (rank == 0) {
         cerr << "Finished in " << step << " steps." << endl;
         cerr << "Total time: " << endTime - startTime << " seconds." << endl;
-        cerr << "Partitioning time: " << partitionTime - startTime << " seconds." << endl;
-        cerr << "Community detection time: " << endTime - partitionTime << " seconds." << endl;
+        cerr << "Partitioning time: " << partitionTime << " seconds." << endl;
+        cerr << "Step time: " << stepTime << " seconds." << endl;
+        cerr << "Community detection time: " << detectionTime << " seconds." << endl;
         cerr << "Total communities found: " << foundCommunities << endl;
 
         string outputFile = "out.csv";
@@ -414,23 +372,29 @@ int main(int argc, char **argv) {
         }
 
         if (!fileExists)
-            outFile << "size,totalTime,partitionTime,stepTime,detectionTime,foundCommunities,fileName" << endl;  // Write header if file does not exist
+            outFile << "size,totalTime,partitionTime,distributionTime,stepTime,collectingRemoteTime,detectionTime,exchangingCommunitiesTime,collectingMissingTime,coarsenTime,foundCommunities,fileName" << endl;  // Write header if file does not exist
 
         outFile << size << ","
                 << endTime - startTime << ","
-                << partitionTime - startTime << ","
+                << partitionTime << ","
+                << distributionTime << ","
                 << stepTime << ","
-                << endTime - partitionTime << ","
+                << collectingRemoteTime << ","
+                << detectionTime << ","
+                << exchangingCommunitiesTime << ","
+                << collectingMissingTime << ","
+                << coarsenTime << ","
                 << foundCommunities << ","
                 << fileName << endl;  // Write the results to the output file
-        outFile.close();              // Close the output file
+
+        outFile.close();  // Close the output file
     }
 
     MPI_Finalize();
     return 0;
 }
 
-void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int rank, vector<unsigned int> &getList, vector<unsigned int> &getProcessList) {
+void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int rank, vector<unsigned int> &getList) {
     bool weighted = !localGraph.weights.empty();  // Check if the graph is weighted
 
     vector<unsigned long> offsets;   // Offsets for each neighbour list
