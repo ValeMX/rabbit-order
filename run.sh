@@ -32,3 +32,6 @@ for file in "$@"; do
     echo "Running $(basename "$full_path")"
     run_mpi "$full_path"
 done
+
+echo "All runs completed. Results are saved in $(pwd)"
+rm exe

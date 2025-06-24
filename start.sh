@@ -28,3 +28,6 @@ for file in ../../data/*.txt; do
     echo "Running $(basename "$file")"
     run_mpi "$file"
 done
+
+echo "All runs completed. Results are saved in $(pwd)"
+rm exe

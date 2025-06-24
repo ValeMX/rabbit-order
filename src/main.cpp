@@ -79,6 +79,9 @@ int main(int argc, char **argv) {
     int totalNodes = p.partitionMap.size();  // Total number of nodes in the graph
     int totalWeight = p.edgeList.size();     // Total weight of the graph
 
+    int degree = totalNodes;
+    int edges = totalWeight;
+
     if (rank == 0) {
         nodesOffsets[0] = 0;  // Initialize offsets for nodes
         edgesOffsets[0] = 0;  // Initialize offsets for edges
@@ -372,7 +375,7 @@ int main(int argc, char **argv) {
         }
 
         if (!fileExists)
-            outFile << "size,totalTime,partitionTime,distributionTime,stepTime,collectingRemoteTime,detectionTime,exchangingCommunitiesTime,collectingMissingTime,coarsenTime,foundCommunities,fileName" << endl;  // Write header if file does not exist
+            outFile << "size,totalTime,partitionTime,distributionTime,stepTime,collectingRemoteTime,detectionTime,exchangingCommunitiesTime,collectingMissingTime,coarsenTime,foundCommunities,fileName,totalNodes,totalEdges" << endl;  // Write header if file does not exist
 
         string fileName = filesystem::path(filePath).filename().string();  // Get the filename from the file path
 
@@ -388,7 +391,9 @@ int main(int argc, char **argv) {
                 << collectingMissingTime << ","
                 << coarsenTime << ","
                 << foundCommunities << ","
-                << fileName << endl;
+                << fileName << ","
+                << degree << ","
+                << edges << endl;
 
         outFile.close();  // Close the output file
     }
