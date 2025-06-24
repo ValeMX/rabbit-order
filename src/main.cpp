@@ -15,7 +15,7 @@
 
 using namespace std;
 
-char *fileName = NULL;
+char *filePath = NULL;
 
 void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int rank, vector<unsigned int> &getList);
 void resolveDuality(vector<int> &n2c);
@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
     if (argc < 2)
         cerr << "Usage: " << argv[0] << " <filename>" << endl;
     else
-        fileName = argv[1];
+        filePath = argv[1];
 
     int rank, size;
 
@@ -53,19 +53,19 @@ int main(int argc, char **argv) {
     vector<unsigned int> communities;          // Vector to store communities
 
     if (rank == 0) {
-        if (fileName == NULL) {
+        if (filePath == NULL) {
             cerr << "No input file specified." << endl;
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
 
-        ifstream inputFile(fileName);
+        ifstream inputFile(filePath);
         if (!inputFile.is_open()) {
-            cerr << "Could not open input file: " << fileName << endl;
+            cerr << "Could not open input file: " << filePath << endl;
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
 
         s = MPI_Wtime();  // Start time for reading the file
-        p.staticPartition(fileName);
+        p.staticPartition(filePath);
         e = MPI_Wtime();  // End time for reading the file
     }
 
@@ -374,6 +374,9 @@ int main(int argc, char **argv) {
         if (!fileExists)
             outFile << "size,totalTime,partitionTime,distributionTime,stepTime,collectingRemoteTime,detectionTime,exchangingCommunitiesTime,collectingMissingTime,coarsenTime,foundCommunities,fileName" << endl;  // Write header if file does not exist
 
+        string fileName = filesystem::path(filePath).filename().string();  // Get the filename from the file path
+
+        // Write the results to the output file
         outFile << size << ","
                 << endTime - startTime << ","
                 << partitionTime << ","
@@ -385,7 +388,7 @@ int main(int argc, char **argv) {
                 << collectingMissingTime << ","
                 << coarsenTime << ","
                 << foundCommunities << ","
-                << fileName << endl;  // Write the results to the output file
+                << fileName << endl;
 
         outFile.close();  // Close the output file
     }
