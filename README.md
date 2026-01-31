@@ -7,14 +7,15 @@
 ```
 
 rabbit-order/
-├── data/                  # Input datasets 
-├── results/               # Output results and graphs
-├── scripts/               # Results visualization scripts (Python)
-├── src/                   # Source code (C++)
-├── run.sh                 # Execution without compilation
-├── start.sh               # Compilation and execution
-├── Makefile               # Build configuration
-└── README.md              # Project overview and instructions
+├── data/                           # Input datasets 
+├── results/                        # Output results and graphs
+├── scripts/                        # Results visualization scripts (Python)
+├── src/                            # Source code (C++)
+├── Distributed Rabbit Order.pdf    # Execution without compilation
+├── run.sh                          # Execution without compilation
+├── start.sh                        # Compilation and execution
+├── Makefile                        # Build configuration
+└── README.md                       # Project overview and instructions
 
 ```
 
