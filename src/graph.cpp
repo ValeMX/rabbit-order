@@ -105,7 +105,6 @@ vector<unsigned int> Graph::remoteNeighbours(unsigned int node) {
         throw out_of_range("Remote neighbours: Node index out of range");
     }
 
-    // TODO: use count
     vector<unsigned int> remoteNeighbours;
     for (const auto& neighbour : neighboursList[node]) {
         if (isRemote(neighbour)) {

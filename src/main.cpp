@@ -15,13 +15,13 @@
 
 using namespace std;
 
-char *filePath = NULL;
+char* filePath = NULL;
 
-void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int rank, vector<unsigned int> &getList);
-void resolveDuality(vector<int> &n2c);
-double computeModularity(set<unsigned int> &communities, Community &c, Partitioner &p, int rank);
+void collectMissingNodes(Graph& localGraph, Community& c, Partitioner& p, int rank, vector<unsigned int>& getList);
+void resolveDuality(vector<int>& n2c);
+double computeModularity(set<unsigned int>& communities, Community& c, Partitioner& p, int rank);
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     if (argc < 2)
         cerr << "Usage: " << argv[0] << " <filename>" << endl;
     else
@@ -190,10 +190,10 @@ int main(int argc, char **argv) {
         s = MPI_Wtime();  // Start time for collecting remote edges
 
         vector<unsigned int> getList;  // List of remote nodes to retrieve
-        for (const auto &node : localGraph.localNodes) {
+        for (const auto& node : localGraph.localNodes) {
             vector<unsigned int> remoteNeighbours = localGraph.remoteNeighbours(node);
 
-            for (const auto &remoteNode : remoteNeighbours) {
+            for (const auto& remoteNode : remoteNeighbours) {
                 if (find(getList.begin(), getList.end(), remoteNode) == getList.end()) {
                     getList.push_back(remoteNode);  // Add remote node to the get list if not already present
                 }
@@ -221,7 +221,7 @@ int main(int argc, char **argv) {
         vector<unsigned int> nodesList;  // Flattened list of nodes to get communities for
         vector<int> communitiesList;     // Communities of the remote nodes
 
-        for (const auto &node : localGraph.localNodes) {
+        for (const auto& node : localGraph.localNodes) {
             unsigned int community = c.n2c[node];  // Get the community of the local node
             nodesList.push_back(node);             // Add the node to the flattened list
             communitiesList.push_back(community);  // Add the community to the communities list
@@ -314,7 +314,7 @@ int main(int argc, char **argv) {
         // ----------------------------------------------------------------
         map<int, int> old2new;  // Map to store new community indices
         vector<int> new2old;    // Vector to store community IDs
-        for (const auto &community : c2n) {
+        for (const auto& community : c2n) {
             old2new[community.first] = old2new.size();  // Assign new indices to communities
             new2old.push_back(community.first);         // Store the old community ID
         }
@@ -326,11 +326,11 @@ int main(int argc, char **argv) {
 
         Graph coarseGraph;
         getList.resize(0);  // List of remote nodes to retrieve
-        for (const auto &community : c2n) {
+        for (const auto& community : c2n) {
             if (old2new[community.first] % size != rank) continue;    // Skip communities not owned by the current process
             coarseGraph.localNodes.insert(old2new[community.first]);  // Add the community to the local nodes of the coarse graph
 
-            for (const auto &node : community.second) {      // Add the node to the local nodes of the coarse graph
+            for (const auto& node : community.second) {      // Add the node to the local nodes of the coarse graph
                 if (localGraph.isCollected(node)) continue;  // Skip if the node is already collected
 
                 if (find(getList.begin(), getList.end(), node) == getList.end()) {
@@ -402,7 +402,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 
-void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int rank, vector<unsigned int> &getList) {
+void collectMissingNodes(Graph& localGraph, Community& c, Partitioner& p, int rank, vector<unsigned int>& getList) {
     bool weighted = !localGraph.weights.empty();  // Check if the graph is weighted
 
     vector<unsigned long> offsets;   // Offsets for each neighbour list
@@ -415,14 +415,14 @@ void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int ra
 
     offsets.push_back(0);  // Initialize the first offset to 0
     for (size_t i = 0; i < localGraph.neighboursList.size(); ++i) {
-        const auto &vec = localGraph.neighboursList[i];
+        const auto& vec = localGraph.neighboursList[i];
         nodesList.insert(nodesList.end(), vec.begin(), vec.end());  // Flatten the neighbour lists
         offsets.push_back(nodesList.size());                        // Update the offset for the next neighbour list
     }
 
     if (weighted) {
         for (size_t i = 0; i < localGraph.weights.size(); ++i) {
-            const auto &vec = localGraph.weights[i];
+            const auto& vec = localGraph.weights[i];
             weightsList.insert(weightsList.end(), vec.begin(), vec.end());  // Flatten the weights lists
         }
     }
@@ -443,7 +443,7 @@ void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int ra
     int it = 0;
 
     MPI_Win_lock_all(MPI_MODE_NOCHECK, windowOffsets);  // Lock the window for all processes
-    for (const auto &node : getList) {
+    for (const auto& node : getList) {
         unsigned int owner = p.owner(node);  // Get the owner process of the remote node
         if (owner == rank) continue;         // Skip if the process is the current one
 
@@ -457,7 +457,7 @@ void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int ra
     it = 0;                                                           // Reset iterator for neighbour offsets
     MPI_Win_lock_all(MPI_MODE_NOCHECK, windowNodes);                  // Lock the window for all processes
     if (weighted) MPI_Win_lock_all(MPI_MODE_NOCHECK, windowWeights);  // Lock the weights window if weighted
-    for (const auto &node : getList) {
+    for (const auto& node : getList) {
         unsigned int owner = p.owner(node);  // Get the owner process of the remote node
         if (owner == rank) continue;         // Skip if the process is the current one
 
@@ -492,7 +492,7 @@ void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int ra
 
     // Update the local graph with remote nodes and their communities
     c.resize();  // Resize the community structure based on the local graph
-    for (const auto &node : getList) {
+    for (const auto& node : getList) {
         int community = c.n2c[node] < 0 ? node : c.n2c[node];  // Get the community of the remote node, or use the node itself if not assigned
         unsigned int degree = localGraph.degree(node);         // Get the degree of the remote node
         c.updateRemote(node, community, degree);               // Update the community structure with the remote node
@@ -503,7 +503,7 @@ void collectMissingNodes(Graph &localGraph, Community &c, Partitioner &p, int ra
     if (weighted) MPI_Win_free(&windowWeights);  // Free the weights window if weighted
 }
 
-void resolveDuality(vector<int> &n2c) {
+void resolveDuality(vector<int>& n2c) {
     for (int node = 0; node < static_cast<int>(n2c.size()); ++node) {
         int current = node;
         unordered_set<int> visited;
@@ -526,12 +526,12 @@ void resolveDuality(vector<int> &n2c) {
     }
 }
 
-double computeModularity(set<unsigned int> &communities, Community &c, Partitioner &p, int rank) {
+double computeModularity(set<unsigned int>& communities, Community& c, Partitioner& p, int rank) {
     double modularity = 0.0;
     double localModularity = 0.0;                             // Compute the local modularity
     vector<double> globalModularities(p.numberOfPartitions);  // Vector to hold global modularities from all processes
 
-    for (const auto &community : communities) {
+    for (const auto& community : communities) {
         if (p.owner(community) != rank) continue;    // Skip if the community is not owned by the current process
         localModularity += c.modularity(community);  // Accumulate the modularity for the local community
     }

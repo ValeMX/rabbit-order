@@ -1,7 +1,6 @@
 #include "community.h"
 
 Community::Community(Graph& gb, int st, double thr) : g(gb) {
-    // TODO: All'inizio ogni nodo è parte della sua community, quindi non serve condividerlo
     size = g.neighboursList.size();  // Set the size of the community structure based on the graph
 
     n2c.resize(size, -1);   // Initialize node to community mapping with -1
@@ -188,7 +187,6 @@ bool Community::step() {
         double bestLinks = 0.;
         double bestGain = 0.;
 
-        // TODO: self loop se è da solo?
         for (const auto& c : neighbourCommunitiesMap) {
             double gain = modularityGain(c.first, c.second, degree);  // Compute the modularity gain for moving the node
 
