@@ -11,7 +11,7 @@ rabbit-order/
 ├── results/                        # Output results and graphs
 ├── scripts/                        # Results visualization scripts (Python)
 ├── src/                            # Source code (C++)
-├── Distributed Rabbit Order.pdf    # Execution without compilation
+├── Distributed Rabbit Order.pdf    # Thesis
 ├── run.sh                          # Execution without compilation
 ├── start.sh                        # Compilation and execution
 ├── Makefile                        # Build configuration
